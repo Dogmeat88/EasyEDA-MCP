@@ -1,0 +1,21 @@
+import antfu from '@antfu/eslint-config';
+
+export default antfu(
+	{
+		stylistic: {
+			indent: 'tab',
+			quotes: 'single',
+			semi: true,
+		},
+
+		typescript: true,
+
+		ignores: ['build/dist/', 'coverage/', 'dist/', 'node_modules/', '.eslintcache', 'debug.log'],
+	},
+	{
+		files: ['test/**/*.test.ts'],
+		rules: {
+			'test/no-import-node-test': 'off',
+		},
+	},
+);

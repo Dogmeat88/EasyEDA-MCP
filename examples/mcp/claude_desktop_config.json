@@ -1,0 +1,9 @@
+{
+	"mcpServers": {
+		"easyeda-mcp": {
+			"command": "npm",
+			"args": ["run", "mcp:server"],
+			"cwd": "/home/i/repos/pro-api-sdk"
+		}
+	}
+}

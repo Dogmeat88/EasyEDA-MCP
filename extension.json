@@ -1,0 +1,84 @@
+{
+	"name": "pro-api-sdk",
+	"uuid": "4d178577408e469596af3d0b5df241f0",
+	"displayName": "EasyEDA MCP Bridge",
+	"description": "EasyEDA Pro MCP bridge extension for local agent and automation workflows",
+	"version": "1.0.0",
+	"publisher": "",
+	"engines": {
+		"eda": "^3.0.0"
+	},
+	"license": "Apache-2.0",
+	"repository": {
+		"type": "extension-store",
+		"url": ""
+	},
+	"categories": "Other",
+	"keywords": [
+		"SDK"
+	],
+	"images": {
+		"logo": "./images/logo.png"
+	},
+	"homepage": "",
+	"bugs": "",
+	"activationEvents": {},
+	"entry": "./dist/index",
+	"dependentExtensions": {},
+	"headerMenus": {
+		"home": [
+			{
+				"id": "EasyEDA MCP Bridge",
+				"title": "EasyEDA MCP Bridge",
+				"menuItems": [
+					{
+						"id": "MCP Bridge Reconnect",
+						"title": "Reconnect",
+						"registerFn": "bridgeReconnect"
+					},
+					{
+						"id": "MCP Bridge Status",
+						"title": "Status",
+						"registerFn": "bridgeStatus"
+					}
+				]
+			}
+		],
+		"sch": [
+			{
+				"id": "EasyEDA MCP Bridge",
+				"title": "EasyEDA MCP Bridge",
+				"menuItems": [
+					{
+						"id": "MCP Bridge Reconnect",
+						"title": "Reconnect",
+						"registerFn": "bridgeReconnect"
+					},
+					{
+						"id": "MCP Bridge Status",
+						"title": "Status",
+						"registerFn": "bridgeStatus"
+					}
+				]
+			}
+		],
+		"pcb": [
+			{
+				"id": "EasyEDA MCP Bridge",
+				"title": "EasyEDA MCP Bridge",
+				"menuItems": [
+					{
+						"id": "MCP Bridge Reconnect",
+						"title": "Reconnect",
+						"registerFn": "bridgeReconnect"
+					},
+					{
+						"id": "MCP Bridge Status",
+						"title": "Status",
+						"registerFn": "bridgeStatus"
+					}
+				]
+			}
+		]
+	}
+}

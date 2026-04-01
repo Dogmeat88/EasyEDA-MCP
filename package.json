@@ -1,0 +1,48 @@
+{
+	"name": "pro-api-sdk",
+	"version": "1.3.2",
+	"description": "EasyEDA Pro MCP bridge extension for local agent and automation workflows",
+	"author": "JLCEDA <support@lceda.cn>",
+	"license": "Apache-2.0",
+	"homepage": "https://pro.lceda.cn/",
+	"engines": {
+		"node": ">=20.17.0"
+	},
+	"scripts": {
+		"compile": "rimraf ./dist/ && ts-node ./config/esbuild.prod.ts",
+		"lint": "eslint",
+		"fix": "eslint --fix",
+		"build": "npm run compile && ts-node ./build/packaged.ts",
+		"mcp:server": "ts-node ./src/mcp-server.ts",
+		"test": "node --test --require ts-node/register ./test/**/*.test.ts",
+		"test:live": "node --test --require ts-node/register ./test/live-mcp.integration.test.ts"
+	},
+	"dependencies": {
+		"@modelcontextprotocol/sdk": "^1.29.0",
+		"ws": "^8.20.0",
+		"zod": "^4.3.6"
+	},
+	"devDependencies": {
+		"@antfu/eslint-config": "^5.4.1",
+		"@jlceda/pro-api-types": "^0.2.21",
+		"@types/fs-extra": "^11.0.4",
+		"@types/node": "^25.5.0",
+		"@types/ws": "^8.18.1",
+		"esbuild": "^0.24.2",
+		"eslint": "^9.37.0",
+		"fs-extra": "^11.3.0",
+		"ignore": "^7.0.3",
+		"jszip": "^3.10.1",
+		"lint-staged": "^16.2.3",
+		"rimraf": "^6.0.1",
+		"simple-git-hooks": "^2.13.1",
+		"ts-node": "^10.9.2",
+		"typescript": "^5.7.3"
+	},
+	"simple-git-hooks": {
+		"pre-commit": "npx lint-staged"
+	},
+	"lint-staged": {
+		"*": "eslint --fix"
+	}
+}
