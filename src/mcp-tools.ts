@@ -629,7 +629,7 @@ export function registerEasyedaTools(server: ToolRegistrar, bridgeSession: Easye
 		{
 			description: 'List boards, PCBs, schematics, schematic pages, and panels in the current project.',
 		},
-		async () => makeToolResult(await bridgeSession.call('list_project_objects')),
+		async () => makeToolResult(normalizeProjectObjects(await bridgeSession.call('list_project_objects'))),
 	);
 
 	server.registerTool(
@@ -1245,6 +1245,16 @@ export function normalizeStructuredContent(value: unknown): Record<string, unkno
 	return { value };
 }
 
+function normalizeProjectObjects(value: unknown): Record<string, unknown> {
+	const projectObjects = normalizeStructuredContent(value);
+	return {
+		...projectObjects,
+		boards: normalizeBoards(projectObjects.boards),
+		schematics: normalizeSchematics(projectObjects.schematics),
+		schematicPages: normalizeSchematicPages(projectObjects.schematicPages),
+	};
+}
+
 async function callSetDocumentSourceWithRecovery(
 	bridgeSession: EasyedaBridgeCaller,
 	args: Record<string, unknown>,
@@ -1347,6 +1357,83 @@ function enrichBridgeStatus(value: Record<string, unknown>): Record<string, unkn
 		availableBridgeMethodCount: methods.length,
 		recommendedNextSteps,
 	};
+}
+
+function normalizeBoards(value: unknown): unknown {
+	if (!Array.isArray(value))
+		return value;
+
+	return value.map((entry) => {
+		const board = asRecord(entry);
+		if (!board)
+			return entry;
+
+		return {
+			...board,
+			schematic: normalizeSchematic(board.schematic),
+		};
+	});
+}
+
+function normalizeSchematics(value: unknown): unknown {
+	if (!Array.isArray(value))
+		return value;
+
+	return value.map(normalizeSchematic);
+}
+
+function normalizeSchematic(value: unknown): unknown {
+	const schematic = asRecord(value);
+	if (!schematic)
+		return value;
+
+	const normalizedPages = normalizeSchematicPages(schematic.page);
+	const normalizedSchematicName = getSchematicNameFromPages(normalizedPages);
+
+	return {
+		...schematic,
+		...(normalizedSchematicName ? { name: normalizedSchematicName } : {}),
+		page: normalizedPages,
+	};
+}
+
+function normalizeSchematicPages(value: unknown): unknown {
+	if (!Array.isArray(value))
+		return value;
+
+	return value.map((entry) => {
+		const page = asRecord(entry);
+		if (!page)
+			return entry;
+
+		const normalizedPageName = getTitleBlockValue(page.titleBlockData, '@Page Name');
+		return {
+			...page,
+			...(normalizedPageName ? { name: normalizedPageName } : {}),
+		};
+	});
+}
+
+function getSchematicNameFromPages(value: unknown): string | undefined {
+	if (!Array.isArray(value))
+		return undefined;
+
+	for (const entry of value) {
+		const page = asRecord(entry);
+		const pageTitleBlockData = page?.titleBlockData;
+		const schematicName = getTitleBlockValue(pageTitleBlockData, '@Schematic Name');
+		if (schematicName)
+			return schematicName;
+	}
+
+	return undefined;
+}
+
+function getTitleBlockValue(titleBlockData: unknown, key: string): string | undefined {
+	const titleBlockRecord = asRecord(titleBlockData);
+	const entry = asRecord(titleBlockRecord?.[key]);
+	const value = entry?.value;
+	return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
 function enrichCurrentContext(value: unknown): Record<string, unknown> {

@@ -164,6 +164,78 @@ test('set_document_source recovers when EasyEDA applies the source before the br
 	assert.equal(result.structuredContent.previousSourceHash, 'old-hash');
 });
 
+test('list_project_objects normalizes schematic and page names from title block metadata', async () => {
+	const registeredTools = createRegisteredTools({
+		async call(method, params) {
+			if (method === 'list_project_objects') {
+				return {
+					boards: [
+						{
+							name: 'Board1',
+							schematic: {
+								name: 'schematic1',
+								page: [
+									{
+										name: 'p1',
+										titleBlockData: {
+											'@Schematic Name': { value: 'Schematic1' },
+											'@Page Name': { value: 'P1' },
+										},
+									},
+								],
+							},
+						},
+					],
+					schematics: [
+						{
+							name: 'schematic1',
+							page: [
+								{
+									name: 'p1',
+									titleBlockData: {
+										'@Schematic Name': { value: 'Schematic1' },
+										'@Page Name': { value: 'P1' },
+									},
+								},
+							],
+						},
+					],
+					schematicPages: [
+						{
+							name: 'p1',
+							titleBlockData: {
+								'@Schematic Name': { value: 'Schematic1' },
+								'@Page Name': { value: 'P1' },
+							},
+						},
+					],
+					pcbs: [],
+					panels: [],
+				};
+			}
+
+			return { method, params };
+		},
+		getConnectionState() {
+			return { connected: true };
+		},
+	});
+
+	const listProjectObjectsTool = registeredTools.find(tool => tool.name === 'list_project_objects');
+	assert.ok(listProjectObjectsTool);
+
+	const result = await listProjectObjectsTool.handler({}) as { structuredContent: Record<string, unknown> };
+	const boards = result.structuredContent.boards as Array<Record<string, unknown>>;
+	const schematics = result.structuredContent.schematics as Array<Record<string, unknown>>;
+	const schematicPages = result.structuredContent.schematicPages as Array<Record<string, unknown>>;
+
+	assert.equal((boards[0].schematic as { name: string }).name, 'Schematic1');
+	assert.equal(((boards[0].schematic as { page: Array<{ name: string }> }).page[0]).name, 'P1');
+	assert.equal(schematics[0].name, 'Schematic1');
+	assert.equal((schematics[0].page as Array<{ name: string }>)[0].name, 'P1');
+	assert.equal(schematicPages[0].name, 'P1');
+});
+
 test('new component, pin, pad, query, and net tool handlers dispatch the expected bridge methods', async () => {
 	const registeredTools = createRegisteredTools();
 	const bridgeStatusTool = registeredTools.find(tool => tool.name === 'bridge_status');
