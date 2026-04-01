@@ -14,12 +14,13 @@ import { WebSocketServer } from 'ws';
 
 import { EasyedaBridgeSession } from './bridge-session';
 import { DEFAULT_BRIDGE_PATH, DEFAULT_BRIDGE_PORT } from './mcp-bridge-protocol';
+import type { BridgeMethod } from './mcp-bridge-protocol';
 import { registerEasyedaTools } from './mcp-tools';
 
 const bridgeHost = process.env.EASYEDA_MCP_BRIDGE_HOST ?? '127.0.0.1';
 const bridgePath = process.env.EASYEDA_MCP_BRIDGE_PATH ?? DEFAULT_BRIDGE_PATH;
 const bridgePort = Number(process.env.EASYEDA_MCP_BRIDGE_PORT ?? DEFAULT_BRIDGE_PORT);
-const requestTimeoutMs = Number(process.env.EASYEDA_MCP_BRIDGE_TIMEOUT_MS ?? 10_000);
+const requestTimeoutMs = Number(process.env.EASYEDA_MCP_BRIDGE_TIMEOUT_MS ?? 30_000);
 const mcpHttpEnabled = process.env.EASYEDA_MCP_HTTP_ENABLED !== '0';
 const mcpHttpHost = process.env.EASYEDA_MCP_HTTP_HOST ?? '127.0.0.1';
 const mcpHttpPort = Number(process.env.EASYEDA_MCP_HTTP_PORT ?? 19733);
@@ -27,11 +28,24 @@ const mcpHttpPath = process.env.EASYEDA_MCP_HTTP_PATH ?? '/mcp';
 const serverPidFile = process.env.EASYEDA_MCP_PID_FILE ?? join(tmpdir(), 'easyeda-mcp-server.pid');
 const execFileAsync = promisify(execFile);
 
+const requestTimeoutOverrides: Partial<Record<BridgeMethod, number>> = {
+	get_current_context: Math.max(requestTimeoutMs, 20_000),
+	list_project_objects: Math.max(requestTimeoutMs, 20_000),
+	search_library_devices: Math.max(requestTimeoutMs, 20_000),
+	get_schematic_primitive: Math.max(requestTimeoutMs, 20_000),
+	get_schematic_primitives_bbox: Math.max(requestTimeoutMs, 20_000),
+	get_pcb_primitive: Math.max(requestTimeoutMs, 20_000),
+	get_pcb_primitives_bbox: Math.max(requestTimeoutMs, 20_000),
+	get_document_source: Math.max(requestTimeoutMs, 45_000),
+	set_document_source: Math.max(requestTimeoutMs, 60_000),
+};
+
 const bridgeSession = new EasyedaBridgeSession({
 	bridgeHost,
 	bridgePath,
 	bridgePort,
 	requestTimeoutMs,
+	requestTimeoutOverrides,
 	serverName: 'easyeda-mcp-server',
 });
 

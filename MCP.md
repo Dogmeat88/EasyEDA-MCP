@@ -125,6 +125,10 @@ The MCP server also exposes a local Streamable HTTP endpoint for attach-style te
 - `expectedSourceHash`
 - or `force: true`
 
+It also accepts:
+
+- `skipConfirmation: true` to suppress the bridge-side overwrite confirmation dialog
+
 Recommended flow:
 
 1. Call `get_document_source`.
@@ -137,7 +141,8 @@ Example request payload:
 ```
 {
    "source": "...updated source...",
-   "expectedSourceHash": "1234:deadbeef"
+   "expectedSourceHash": "1234:deadbeef",
+   "skipConfirmation": true
 }
 ```
 
@@ -146,7 +151,8 @@ If you need to bypass the optimistic check:
 ```
 {
    "source": "...updated source...",
-   "force": true
+   "force": true,
+   "skipConfirmation": true
 }
 ```
 
@@ -178,6 +184,8 @@ Each edit tool accepts `saveAfter: true` if you want the document saved immediat
 
 The same primitive families now also support targeted modification and, where the host SDK allows it, deletion.
 
+Delete tools also accept `skipConfirmation: true` to suppress the bridge-side confirmation prompt before the delete request is sent to EasyEDA.
+
 ## Document Lifecycle Tools
 
 The bridge now covers the main project object lifecycle:
@@ -208,6 +216,7 @@ The bridge now supports a fuller component and inspection workflow:
 - `add_pcb_component`: place a searched library device onto the active PCB document
 - `modify_schematic_component` and `modify_pcb_component`: adjust placed component properties such as coordinates, rotation, designator, and metadata
 - `delete_schematic_component` and `delete_pcb_component`: remove placed components with native EasyEDA confirmation dialogs
+- `delete_*` tools: accept `skipConfirmation: true` to suppress the bridge-side delete prompt
 - `add_schematic_net_flag` and `add_schematic_net_port`: place common net-aware schematic marker components without editing whole source text
 - `add_schematic_short_circuit_flag`: place the EasyEDA short-circuit marker component without editing whole source text
 - `list_schematic_component_pins`: inspect resolved symbol pins, including coordinates and pin numbers
@@ -416,7 +425,7 @@ Workspace or user `mcp.json` example:
 - `EASYEDA_MCP_BRIDGE_HOST`
 - `EASYEDA_MCP_BRIDGE_PORT`
 - `EASYEDA_MCP_BRIDGE_PATH`
-- `EASYEDA_MCP_BRIDGE_TIMEOUT_MS`
+- `EASYEDA_MCP_BRIDGE_TIMEOUT_MS` base bridge timeout in milliseconds, default `30000`
 - `EASYEDA_MCP_HTTP_ENABLED`
 - `EASYEDA_MCP_HTTP_HOST`
 - `EASYEDA_MCP_HTTP_PORT`
@@ -424,12 +433,16 @@ Workspace or user `mcp.json` example:
 - `EASYEDA_MCP_LIVE_ATTACH_EXISTING`
 - `EASYEDA_MCP_LIVE_SERVER_URL`
 
+Slow bridge operations such as `get_document_source`, `set_document_source`, and primitive BBox queries use higher internal per-method timeout floors so large EasyEDA documents are less likely to fail spuriously.
+
+Bridge requests are also serialized server-side so the EasyEDA runtime only handles one in-flight MCP operation at a time. This reduces instability from overlapping long-running bridge calls.
+
 ## Notes
 
 - The extension side depends on EasyEDA Pro's external interaction permission for WebSocket access.
 - This scaffold intentionally starts with a small, explicit tool set rather than exposing arbitrary `eda.*` execution.
 - `ping_bridge` and `echo_bridge` are minimal round-trip bridge diagnostics and are useful for proving the MCP call path independently of document edits.
-- Destructive tools are guarded twice: the MCP tool is explicit and the EasyEDA extension shows a native confirmation dialog before delete or overwrite operations.
+- Destructive tools are explicit MCP calls, and the EasyEDA extension shows a bridge-side confirmation dialog before delete or overwrite operations unless `skipConfirmation: true` is provided on the supported delete and source-overwrite tools.
 - The VS Code client configuration format follows the documented `mcp.json` `servers` structure for local stdio servers, and the Claude example follows the documented `claude_desktop_config.json` `mcpServers` structure.
 - The included tests cover tool registration, local schema validation for optimistic source writes, and revision-hash stability without requiring a live EasyEDA instance.
 - The included tests also cover bridge-session timeout handling, disconnect rejection, and out-of-order response correlation without requiring a live EasyEDA instance.

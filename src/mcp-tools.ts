@@ -298,6 +298,7 @@ export const modifySchematicTextInputSchema = z.object({
 export const deletePrimitiveInputSchema = z.object({
 	primitiveId: z.string().min(1),
 	saveAfter: z.boolean().optional(),
+	skipConfirmation: z.boolean().optional(),
 });
 
 export const modifySchematicNetLabelInputSchema = z.object({
@@ -450,28 +451,34 @@ export const renamePanelInputSchema = z.object({
 
 export const deleteBoardInputSchema = z.object({
 	boardName: z.string().min(1),
+	skipConfirmation: z.boolean().optional(),
 });
 
 export const deletePcbInputSchema = z.object({
 	pcbUuid: z.string().min(1),
+	skipConfirmation: z.boolean().optional(),
 });
 
 export const deleteSchematicInputSchema = z.object({
 	schematicUuid: z.string().min(1),
+	skipConfirmation: z.boolean().optional(),
 });
 
 export const deleteSchematicPageInputSchema = z.object({
 	schematicPageUuid: z.string().min(1),
+	skipConfirmation: z.boolean().optional(),
 });
 
 export const deletePanelInputSchema = z.object({
 	panelUuid: z.string().min(1),
+	skipConfirmation: z.boolean().optional(),
 });
 
 export const setDocumentSourceInputSchema = z.object({
 	source: z.string().min(1),
 	expectedSourceHash: z.string().optional(),
 	force: z.boolean().optional(),
+	skipConfirmation: z.boolean().optional(),
 }).refine(
 	({ expectedSourceHash, force }) => Boolean(expectedSourceHash) || force === true,
 	'Provide expectedSourceHash or force: true',
@@ -752,7 +759,7 @@ export function registerEasyedaTools(server: ToolRegistrar, bridgeSession: Easye
 	server.registerTool(
 		'delete_schematic_component',
 		{
-			description: 'Delete a component primitive from the active schematic page. EasyEDA will still show a native confirmation dialog before deletion.',
+			description: 'Delete a component primitive from the active schematic page. Set skipConfirmation to true to suppress the bridge-side delete prompt.',
 			inputSchema: deletePrimitiveInputSchema,
 		},
 		async args => makeToolResult(await bridgeSession.call('delete_schematic_component', args)),
@@ -905,7 +912,7 @@ export function registerEasyedaTools(server: ToolRegistrar, bridgeSession: Easye
 	server.registerTool(
 		'delete_pcb_component',
 		{
-			description: 'Delete a component primitive from the active PCB document. EasyEDA will still show a native confirmation dialog before deletion.',
+			description: 'Delete a component primitive from the active PCB document. Set skipConfirmation to true to suppress the bridge-side delete prompt.',
 			inputSchema: deletePrimitiveInputSchema,
 		},
 		async args => makeToolResult(await bridgeSession.call('delete_pcb_component', args)),
@@ -1030,7 +1037,7 @@ export function registerEasyedaTools(server: ToolRegistrar, bridgeSession: Easye
 	server.registerTool(
 		'delete_schematic_text',
 		{
-			description: 'Delete a text primitive from the active schematic page. EasyEDA will still show a native confirmation dialog before deletion.',
+			description: 'Delete a text primitive from the active schematic page. Set skipConfirmation to true to suppress the bridge-side delete prompt.',
 			inputSchema: deletePrimitiveInputSchema,
 		},
 		async args => makeToolResult(await bridgeSession.call('delete_schematic_text', args)),
@@ -1057,7 +1064,7 @@ export function registerEasyedaTools(server: ToolRegistrar, bridgeSession: Easye
 	server.registerTool(
 		'delete_schematic_wire',
 		{
-			description: 'Delete a wire primitive from the active schematic page. EasyEDA will still show a native confirmation dialog before deletion.',
+			description: 'Delete a wire primitive from the active schematic page. Set skipConfirmation to true to suppress the bridge-side delete prompt.',
 			inputSchema: deletePrimitiveInputSchema,
 		},
 		async args => makeToolResult(await bridgeSession.call('delete_schematic_wire', args)),
@@ -1075,7 +1082,7 @@ export function registerEasyedaTools(server: ToolRegistrar, bridgeSession: Easye
 	server.registerTool(
 		'delete_pcb_line',
 		{
-			description: 'Delete a line primitive from the active PCB document. EasyEDA will still show a native confirmation dialog before deletion.',
+			description: 'Delete a line primitive from the active PCB document. Set skipConfirmation to true to suppress the bridge-side delete prompt.',
 			inputSchema: deletePrimitiveInputSchema,
 		},
 		async args => makeToolResult(await bridgeSession.call('delete_pcb_line', args)),
@@ -1093,7 +1100,7 @@ export function registerEasyedaTools(server: ToolRegistrar, bridgeSession: Easye
 	server.registerTool(
 		'delete_pcb_text',
 		{
-			description: 'Delete a text primitive from the active PCB document. EasyEDA will still show a native confirmation dialog before deletion.',
+			description: 'Delete a text primitive from the active PCB document. Set skipConfirmation to true to suppress the bridge-side delete prompt.',
 			inputSchema: deletePrimitiveInputSchema,
 		},
 		async args => makeToolResult(await bridgeSession.call('delete_pcb_text', args)),
@@ -1147,7 +1154,7 @@ export function registerEasyedaTools(server: ToolRegistrar, bridgeSession: Easye
 	server.registerTool(
 		'delete_board',
 		{
-			description: 'Delete a board by name. EasyEDA will still show a native confirmation dialog before deletion.',
+			description: 'Delete a board by name. Set skipConfirmation to true to suppress the bridge-side delete prompt.',
 			inputSchema: deleteBoardInputSchema,
 		},
 		async args => makeToolResult(await bridgeSession.call('delete_board', args)),
@@ -1156,7 +1163,7 @@ export function registerEasyedaTools(server: ToolRegistrar, bridgeSession: Easye
 	server.registerTool(
 		'delete_pcb',
 		{
-			description: 'Delete a PCB by UUID. EasyEDA will still show a native confirmation dialog before deletion.',
+			description: 'Delete a PCB by UUID. Set skipConfirmation to true to suppress the bridge-side delete prompt.',
 			inputSchema: deletePcbInputSchema,
 		},
 		async args => makeToolResult(await bridgeSession.call('delete_pcb', args)),
@@ -1165,7 +1172,7 @@ export function registerEasyedaTools(server: ToolRegistrar, bridgeSession: Easye
 	server.registerTool(
 		'delete_schematic',
 		{
-			description: 'Delete a schematic by UUID. EasyEDA will still show a native confirmation dialog before deletion.',
+			description: 'Delete a schematic by UUID. Set skipConfirmation to true to suppress the bridge-side delete prompt.',
 			inputSchema: deleteSchematicInputSchema,
 		},
 		async args => makeToolResult(await bridgeSession.call('delete_schematic', args)),
@@ -1174,7 +1181,7 @@ export function registerEasyedaTools(server: ToolRegistrar, bridgeSession: Easye
 	server.registerTool(
 		'delete_schematic_page',
 		{
-			description: 'Delete a schematic page by UUID. EasyEDA will still show a native confirmation dialog before deletion.',
+			description: 'Delete a schematic page by UUID. Set skipConfirmation to true to suppress the bridge-side delete prompt.',
 			inputSchema: deleteSchematicPageInputSchema,
 		},
 		async args => makeToolResult(await bridgeSession.call('delete_schematic_page', args)),
@@ -1183,7 +1190,7 @@ export function registerEasyedaTools(server: ToolRegistrar, bridgeSession: Easye
 	server.registerTool(
 		'delete_panel',
 		{
-			description: 'Delete a panel by UUID. EasyEDA will still show a native confirmation dialog before deletion.',
+			description: 'Delete a panel by UUID. Set skipConfirmation to true to suppress the bridge-side delete prompt.',
 			inputSchema: deletePanelInputSchema,
 		},
 		async args => makeToolResult(await bridgeSession.call('delete_panel', args)),
@@ -1200,7 +1207,7 @@ export function registerEasyedaTools(server: ToolRegistrar, bridgeSession: Easye
 	server.registerTool(
 		'set_document_source',
 		{
-			description: 'Replace the source of the active EasyEDA document. Provide expectedSourceHash to guard against stale writes, or set force to bypass the check. EasyEDA will still show a native confirmation dialog before overwrite.',
+			description: 'Replace the source of the active EasyEDA document. Provide expectedSourceHash to guard against stale writes, or set force to bypass the check. Set skipConfirmation to true to suppress the bridge-side overwrite prompt.',
 			inputSchema: setDocumentSourceInputSchema,
 		},
 		async args => makeToolResult(await bridgeSession.call('set_document_source', args)),

@@ -20,12 +20,15 @@ export interface EasyedaBridgeSessionOptions {
 	bridgePath: string;
 	bridgePort: number;
 	requestTimeoutMs: number;
+	requestTimeoutOverrides?: Partial<Record<BridgeMethod, number>>;
 	serverName?: string;
 }
 
 export class EasyedaBridgeSession {
 	private socket?: BridgeSocketLike;
 	private helloPayload?: Record<string, unknown>;
+	private queuedRequestCount = 0;
+	private requestChain: Promise<void> = Promise.resolve();
 	private readonly pendingRequests = new Map<
 		string,
 		{
@@ -91,6 +94,7 @@ export class EasyedaBridgeSession {
 		return {
 			connected: Boolean(this.socket),
 			helloPayload: this.helloPayload,
+			queuedRequestCount: this.queuedRequestCount,
 			pendingRequestCount: this.pendingRequests.size,
 			bridgeHost: this.options.bridgeHost,
 			bridgePort: this.options.bridgePort,
@@ -98,32 +102,50 @@ export class EasyedaBridgeSession {
 		};
 	}
 
+	private getRequestTimeoutMs(method: BridgeMethod): number {
+		return this.options.requestTimeoutOverrides?.[method] ?? this.options.requestTimeoutMs;
+	}
+
 	async call(method: BridgeMethod, params?: Record<string, unknown>): Promise<unknown> {
 		if (!this.socket || this.socket.readyState !== this.socket.OPEN)
 			throw new Error('EasyEDA extension is not connected to the MCP bridge');
 
-		const requestId = randomUUID();
-		const response = await new Promise<unknown>((resolve, reject) => {
-			const timeout = setTimeout(() => {
-				this.pendingRequests.delete(requestId);
-				reject(new Error(`EasyEDA bridge timed out waiting for ${method}`));
-			}, this.options.requestTimeoutMs);
+		this.queuedRequestCount += 1;
+		const runRequest = async (): Promise<unknown> => {
+			this.queuedRequestCount -= 1;
 
-			this.pendingRequests.set(requestId, {
-				resolve,
-				reject,
-				timeout,
+			if (!this.socket || this.socket.readyState !== this.socket.OPEN)
+				throw new Error('EasyEDA extension is not connected to the MCP bridge');
+
+			const requestId = randomUUID();
+			const requestTimeoutMs = this.getRequestTimeoutMs(method);
+			return await new Promise<unknown>((resolve, reject) => {
+				const timeout = setTimeout(() => {
+					this.pendingRequests.delete(requestId);
+					reject(new Error(`EasyEDA bridge timed out waiting for ${method}`));
+				}, requestTimeoutMs);
+
+				this.pendingRequests.set(requestId, {
+					resolve,
+					reject,
+					timeout,
+				});
+
+				this.socket?.send(serializeBridgeEnvelope({
+					protocolVersion: BRIDGE_PROTOCOL_VERSION,
+					type: 'request',
+					requestId,
+					method,
+					params,
+				}));
 			});
+		};
 
-			this.socket?.send(serializeBridgeEnvelope({
-				protocolVersion: BRIDGE_PROTOCOL_VERSION,
-				type: 'request',
-				requestId,
-				method,
-				params,
-			}));
-		});
+		const response = this.requestChain
+			.catch(() => undefined)
+			.then(runRequest);
 
-		return response;
+		this.requestChain = response.then(() => undefined, () => undefined);
+		return await response;
 	}
 }

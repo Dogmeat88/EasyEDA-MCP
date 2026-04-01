@@ -616,7 +616,7 @@ async function modifySchematicComponent(params: Record<string, unknown>): Promis
 async function deleteSchematicComponent(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	await requireCurrentDocumentType(EDMT_EditorDocumentType.SCHEMATIC_PAGE, 'Schematic page required for schematic component deletion');
 	const primitiveId = getRequiredString(params.primitiveId, 'primitiveId');
-	await confirmDestructiveAction('Delete Schematic Component', `Delete schematic component primitive ${primitiveId}?`, 'Delete');
+	await maybeConfirmDestructiveAction(params, 'Delete Schematic Component', `Delete schematic component primitive ${primitiveId}?`, 'Delete');
 	const deleted = await eda.sch_PrimitiveComponent.delete(primitiveId);
 	const saved = await saveSchematicDocumentIfRequested(getOptionalBoolean(params.saveAfter));
 
@@ -915,7 +915,7 @@ async function modifyPcbComponent(params: Record<string, unknown>): Promise<Reco
 async function deletePcbComponent(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	const currentDocument = await requireCurrentDocumentType(EDMT_EditorDocumentType.PCB, 'PCB document required for PCB component deletion');
 	const primitiveId = getRequiredString(params.primitiveId, 'primitiveId');
-	await confirmDestructiveAction('Delete PCB Component', `Delete PCB component primitive ${primitiveId}?`, 'Delete');
+	await maybeConfirmDestructiveAction(params, 'Delete PCB Component', `Delete PCB component primitive ${primitiveId}?`, 'Delete');
 	const deleted = await eda.pcb_PrimitiveComponent.delete(primitiveId);
 	const saved = await savePcbDocumentIfRequested(currentDocument.uuid, getOptionalBoolean(params.saveAfter));
 
@@ -1243,7 +1243,7 @@ async function modifySchematicText(params: Record<string, unknown>): Promise<Rec
 async function deleteSchematicText(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	await requireCurrentDocumentType(EDMT_EditorDocumentType.SCHEMATIC_PAGE, 'Schematic page required for schematic text deletion');
 	const primitiveId = getRequiredString(params.primitiveId, 'primitiveId');
-	await confirmDestructiveAction('Delete Schematic Text', `Delete schematic text primitive ${primitiveId}?`, 'Delete');
+	await maybeConfirmDestructiveAction(params, 'Delete Schematic Text', `Delete schematic text primitive ${primitiveId}?`, 'Delete');
 	const deleted = await eda.sch_PrimitiveText.delete(primitiveId);
 	const saved = await saveSchematicDocumentIfRequested(getOptionalBoolean(params.saveAfter));
 
@@ -1304,7 +1304,7 @@ async function modifySchematicWire(params: Record<string, unknown>): Promise<Rec
 async function deleteSchematicWire(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	await requireCurrentDocumentType(EDMT_EditorDocumentType.SCHEMATIC_PAGE, 'Schematic page required for schematic wire deletion');
 	const primitiveId = getRequiredString(params.primitiveId, 'primitiveId');
-	await confirmDestructiveAction('Delete Schematic Wire', `Delete schematic wire primitive ${primitiveId}?`, 'Delete');
+	await maybeConfirmDestructiveAction(params, 'Delete Schematic Wire', `Delete schematic wire primitive ${primitiveId}?`, 'Delete');
 	const deleted = await eda.sch_PrimitiveWire.delete(primitiveId);
 	const saved = await saveSchematicDocumentIfRequested(getOptionalBoolean(params.saveAfter));
 
@@ -1340,7 +1340,7 @@ async function modifyPcbLine(params: Record<string, unknown>): Promise<Record<st
 async function deletePcbLine(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	const currentDocument = await requireCurrentDocumentType(EDMT_EditorDocumentType.PCB, 'PCB document required for PCB line deletion');
 	const primitiveId = getRequiredString(params.primitiveId, 'primitiveId');
-	await confirmDestructiveAction('Delete PCB Line', `Delete PCB line primitive ${primitiveId}?`, 'Delete');
+	await maybeConfirmDestructiveAction(params, 'Delete PCB Line', `Delete PCB line primitive ${primitiveId}?`, 'Delete');
 	const deleted = await eda.pcb_PrimitiveLine.delete(primitiveId);
 	const saved = await savePcbDocumentIfRequested(currentDocument.uuid, getOptionalBoolean(params.saveAfter));
 
@@ -1381,7 +1381,7 @@ async function modifyPcbText(params: Record<string, unknown>): Promise<Record<st
 async function deletePcbText(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	const currentDocument = await requireCurrentDocumentType(EDMT_EditorDocumentType.PCB, 'PCB document required for PCB text deletion');
 	const primitiveId = getRequiredString(params.primitiveId, 'primitiveId');
-	await confirmDestructiveAction('Delete PCB Text', `Delete PCB text primitive ${primitiveId}?`, 'Delete');
+	await maybeConfirmDestructiveAction(params, 'Delete PCB Text', `Delete PCB text primitive ${primitiveId}?`, 'Delete');
 	const deleted = await eda.pcb_PrimitiveString.delete(primitiveId);
 	const saved = await savePcbDocumentIfRequested(currentDocument.uuid, getOptionalBoolean(params.saveAfter));
 
@@ -1454,7 +1454,8 @@ async function renamePanel(params: Record<string, unknown>): Promise<Record<stri
 
 async function deleteBoard(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	const boardName = getRequiredString(params.boardName, 'boardName');
-	await confirmDestructiveAction(
+	await maybeConfirmDestructiveAction(
+		params,
 		'Delete Board',
 		`Delete board ${boardName}? This cannot be undone from the MCP bridge.`,
 		'Delete',
@@ -1469,7 +1470,8 @@ async function deleteBoard(params: Record<string, unknown>): Promise<Record<stri
 
 async function deletePcb(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	const pcbUuid = getRequiredString(params.pcbUuid, 'pcbUuid');
-	await confirmDestructiveAction(
+	await maybeConfirmDestructiveAction(
+		params,
 		'Delete PCB',
 		`Delete PCB ${pcbUuid}? This may also remove linked items depending on EasyEDA project associations.`,
 		'Delete',
@@ -1484,7 +1486,8 @@ async function deletePcb(params: Record<string, unknown>): Promise<Record<string
 
 async function deleteSchematic(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	const schematicUuid = getRequiredString(params.schematicUuid, 'schematicUuid');
-	await confirmDestructiveAction(
+	await maybeConfirmDestructiveAction(
+		params,
 		'Delete Schematic',
 		`Delete schematic ${schematicUuid}? Linked PCB or CBB content may also be affected by EasyEDA.`,
 		'Delete',
@@ -1499,7 +1502,8 @@ async function deleteSchematic(params: Record<string, unknown>): Promise<Record<
 
 async function deleteSchematicPage(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	const schematicPageUuid = getRequiredString(params.schematicPageUuid, 'schematicPageUuid');
-	await confirmDestructiveAction(
+	await maybeConfirmDestructiveAction(
+		params,
 		'Delete Schematic Page',
 		`Delete schematic page ${schematicPageUuid}? This cannot be undone from the MCP bridge.`,
 		'Delete',
@@ -1514,7 +1518,8 @@ async function deleteSchematicPage(params: Record<string, unknown>): Promise<Rec
 
 async function deletePanel(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	const panelUuid = getRequiredString(params.panelUuid, 'panelUuid');
-	await confirmDestructiveAction(
+	await maybeConfirmDestructiveAction(
+		params,
 		'Delete Panel',
 		`Delete panel ${panelUuid}? This cannot be undone from the MCP bridge.`,
 		'Delete',
@@ -1540,6 +1545,7 @@ async function setDocumentSource(params: Record<string, unknown>): Promise<Recor
 	const source = getRequiredString(params.source, 'source');
 	const expectedSourceHash = getOptionalString(params.expectedSourceHash);
 	const force = getOptionalBoolean(params.force);
+	const skipConfirmation = getOptionalBoolean(params.skipConfirmation) === true;
 	const currentSource = (await eda.sys_FileManager.getDocumentSource()) ?? '';
 	const currentSourceHash = computeSourceRevision(currentSource);
 
@@ -1550,8 +1556,10 @@ async function setDocumentSource(params: Record<string, unknown>): Promise<Recor
 		throw new Error(`Active document source changed. Expected ${expectedSourceHash} but found ${currentSourceHash}`);
 	}
 
-	const confirmMessage = `Replace the active document source with ${source.length} characters of MCP-provided content?`;
-	await confirmDestructiveAction('Overwrite Document Source', confirmMessage, 'Overwrite');
+	if (!skipConfirmation) {
+		const confirmMessage = `Replace the active document source with ${source.length} characters of MCP-provided content?`;
+		await confirmDestructiveAction('Overwrite Document Source', confirmMessage, 'Overwrite');
+	}
 	const updated = await eda.sys_FileManager.setDocumentSource(source);
 
 	return {
@@ -1684,6 +1692,18 @@ async function confirmDestructiveAction(
 
 	if (!confirmed)
 		throw new Error(`${title} cancelled by user`);
+}
+
+async function maybeConfirmDestructiveAction(
+	params: Record<string, unknown>,
+	title: string,
+	content: string,
+	mainButtonTitle: string,
+): Promise<void> {
+	if (getOptionalBoolean(params.skipConfirmation) === true)
+		return;
+
+	await confirmDestructiveAction(title, content, mainButtonTitle);
 }
 
 function getBridgeEndpoint(): string {

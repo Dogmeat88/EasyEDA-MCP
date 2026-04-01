@@ -2,6 +2,8 @@ import { strict as assert } from 'node:assert';
 import test from 'node:test';
 
 import {
+	deleteBoardInputSchema,
+	deletePrimitiveInputSchema,
 	easyedaToolNames,
 	registerEasyedaTools,
 	searchLibraryDevicesInputSchema,
@@ -103,6 +105,23 @@ test('setDocumentSourceInputSchema requires either expectedSourceHash or force',
 		setDocumentSourceInputSchema.parse({
 			source: 'updated',
 			force: true,
+			skipConfirmation: true,
+		});
+	});
+});
+
+test('delete input schemas accept skipConfirmation', () => {
+	assert.doesNotThrow(() => {
+		deletePrimitiveInputSchema.parse({
+			primitiveId: 'e123',
+			skipConfirmation: true,
+		});
+	});
+
+	assert.doesNotThrow(() => {
+		deleteBoardInputSchema.parse({
+			boardName: 'Board1',
+			skipConfirmation: true,
 		});
 	});
 });
