@@ -3,7 +3,7 @@
 		"easyeda-mcp": {
 			"command": "npm",
 			"args": ["run", "mcp:server"],
-			"cwd": "/home/i/repos/pro-api-sdk"
+			"cwd": "/home/i/repos/EasyEDA-MCP"
 		}
 	}
 }

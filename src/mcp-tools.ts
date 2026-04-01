@@ -1210,7 +1210,7 @@ export function registerEasyedaTools(server: ToolRegistrar, bridgeSession: Easye
 			description: 'Replace the source of the active EasyEDA document. Provide expectedSourceHash to guard against stale writes, or set force to bypass the check. Set skipConfirmation to true to suppress the bridge-side overwrite prompt.',
 			inputSchema: setDocumentSourceInputSchema,
 		},
-		async args => makeToolResult(await bridgeSession.call('set_document_source', args)),
+		async args => makeToolResult(await callSetDocumentSourceWithRecovery(bridgeSession, args)),
 	);
 
 	server.registerTool(
@@ -1243,6 +1243,43 @@ export function normalizeStructuredContent(value: unknown): Record<string, unkno
 		return value as Record<string, unknown>;
 
 	return { value };
+}
+
+async function callSetDocumentSourceWithRecovery(
+	bridgeSession: EasyedaBridgeCaller,
+	args: Record<string, unknown>,
+): Promise<unknown> {
+	try {
+		return await bridgeSession.call('set_document_source', args);
+	}
+	catch (error: unknown) {
+		if (!(error instanceof Error) || !error.message.includes('timed out waiting for set_document_source'))
+			throw error;
+
+		const desiredSource = typeof args.source === 'string' ? args.source : undefined;
+		if (typeof desiredSource !== 'string')
+			throw error;
+
+		let currentDocumentSource: Record<string, unknown> | undefined;
+		try {
+			currentDocumentSource = asRecord(await bridgeSession.call('get_document_source'));
+		}
+		catch {
+			throw error;
+		}
+
+		const desiredSourceHash = computeSourceRevision(desiredSource);
+		if (currentDocumentSource?.sourceHash !== desiredSourceHash)
+			throw error;
+
+		return {
+			updated: true,
+			characters: desiredSource.length,
+			sourceHash: desiredSourceHash,
+			previousSourceHash: typeof args.expectedSourceHash === 'string' ? args.expectedSourceHash : undefined,
+			timeoutRecovered: true,
+		};
+	}
 }
 
 function createUsageGuide(): Record<string, unknown> {

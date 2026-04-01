@@ -1,6 +1,7 @@
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
 
+import { computeSourceRevision } from '../src/mcp-bridge-protocol';
 import {
 	deleteBoardInputSchema,
 	deletePrimitiveInputSchema,
@@ -15,7 +16,7 @@ interface RegisteredTool {
 	handler: (args: Record<string, unknown>) => Promise<unknown>;
 }
 
-function createRegisteredTools(): RegisteredTool[] {
+function createRegisteredTools(caller?: import('../src/mcp-tools').EasyedaBridgeCaller): RegisteredTool[] {
 	const registeredTools: RegisteredTool[] = [];
 	registerEasyedaTools(
 		{
@@ -26,7 +27,7 @@ function createRegisteredTools(): RegisteredTool[] {
 				});
 			}) as import('../src/mcp-tools').ToolRegistrar['registerTool'],
 		},
-		{
+		caller ?? {
 			async call(method, params) {
 				return { method, params };
 			},
@@ -124,6 +125,43 @@ test('delete input schemas accept skipConfirmation', () => {
 			skipConfirmation: true,
 		});
 	});
+});
+
+test('set_document_source recovers when EasyEDA applies the source before the bridge response times out', async () => {
+	const source = 'updated-source';
+	const sourceHash = computeSourceRevision(source);
+	const registeredTools = createRegisteredTools({
+		async call(method, params) {
+			if (method === 'set_document_source')
+				throw new Error('EasyEDA bridge timed out waiting for set_document_source');
+
+			if (method === 'get_document_source') {
+				return {
+					source,
+					sourceHash,
+					characters: source.length,
+				};
+			}
+
+			return { method, params };
+		},
+		getConnectionState() {
+			return { connected: true };
+		},
+	});
+	const setDocumentSourceTool = registeredTools.find(tool => tool.name === 'set_document_source');
+
+	assert.ok(setDocumentSourceTool);
+	const result = await setDocumentSourceTool.handler({
+		source,
+		expectedSourceHash: 'old-hash',
+		skipConfirmation: true,
+	}) as { structuredContent: Record<string, unknown> };
+
+	assert.equal(result.structuredContent.updated, true);
+	assert.equal(result.structuredContent.sourceHash, sourceHash);
+	assert.equal(result.structuredContent.timeoutRecovered, true);
+	assert.equal(result.structuredContent.previousSourceHash, 'old-hash');
 });
 
 test('new component, pin, pad, query, and net tool handlers dispatch the expected bridge methods', async () => {

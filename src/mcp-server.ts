@@ -28,16 +28,29 @@ const mcpHttpPath = process.env.EASYEDA_MCP_HTTP_PATH ?? '/mcp';
 const serverPidFile = process.env.EASYEDA_MCP_PID_FILE ?? join(tmpdir(), 'easyeda-mcp-server.pid');
 const execFileAsync = promisify(execFile);
 
+function getMethodTimeoutOverride(method: BridgeMethod, floorMs: number): number {
+	const envKey = `EASYEDA_MCP_${method.toUpperCase()}_TIMEOUT_MS`;
+	const envValue = process.env[envKey];
+	if (!envValue)
+		return Math.max(requestTimeoutMs, floorMs);
+
+	const parsedValue = Number(envValue);
+	if (!Number.isFinite(parsedValue) || parsedValue <= 0)
+		return Math.max(requestTimeoutMs, floorMs);
+
+	return parsedValue;
+}
+
 const requestTimeoutOverrides: Partial<Record<BridgeMethod, number>> = {
-	get_current_context: Math.max(requestTimeoutMs, 20_000),
-	list_project_objects: Math.max(requestTimeoutMs, 20_000),
-	search_library_devices: Math.max(requestTimeoutMs, 20_000),
-	get_schematic_primitive: Math.max(requestTimeoutMs, 20_000),
-	get_schematic_primitives_bbox: Math.max(requestTimeoutMs, 20_000),
-	get_pcb_primitive: Math.max(requestTimeoutMs, 20_000),
-	get_pcb_primitives_bbox: Math.max(requestTimeoutMs, 20_000),
-	get_document_source: Math.max(requestTimeoutMs, 45_000),
-	set_document_source: Math.max(requestTimeoutMs, 60_000),
+	get_current_context: getMethodTimeoutOverride('get_current_context', 20_000),
+	list_project_objects: getMethodTimeoutOverride('list_project_objects', 20_000),
+	search_library_devices: getMethodTimeoutOverride('search_library_devices', 20_000),
+	get_schematic_primitive: getMethodTimeoutOverride('get_schematic_primitive', 20_000),
+	get_schematic_primitives_bbox: getMethodTimeoutOverride('get_schematic_primitives_bbox', 20_000),
+	get_pcb_primitive: getMethodTimeoutOverride('get_pcb_primitive', 20_000),
+	get_pcb_primitives_bbox: getMethodTimeoutOverride('get_pcb_primitives_bbox', 20_000),
+	get_document_source: getMethodTimeoutOverride('get_document_source', 60_000),
+	set_document_source: getMethodTimeoutOverride('set_document_source', 120_000),
 };
 
 const bridgeSession = new EasyedaBridgeSession({

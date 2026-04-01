@@ -341,7 +341,7 @@ Routing limitation: the current SDK surface exposed here supports creating PCB l
 
 ## Client Config Examples
 
-Ready-to-adapt example files are included in [examples/mcp/claude_desktop_config.json](/home/i/repos/pro-api-sdk/examples/mcp/claude_desktop_config.json) and [examples/mcp/vscode.mcp.json](/home/i/repos/pro-api-sdk/examples/mcp/vscode.mcp.json).
+Ready-to-adapt example files are included in [examples/mcp/claude_desktop_config.json](/home/i/repos/EasyEDA-MCP/examples/mcp/claude_desktop_config.json) and [examples/mcp/vscode.mcp.json](/home/i/repos/EasyEDA-MCP/examples/mcp/vscode.mcp.json).
 
 Data structure notes:
 
@@ -378,7 +378,7 @@ Example structure:
       "easyeda-mcp": {
          "command": "npm",
          "args": ["run", "mcp:server"],
-         "cwd": "/home/i/repos/pro-api-sdk"
+         "cwd": "/home/i/repos/EasyEDA-MCP"
       }
    }
 }
@@ -410,7 +410,7 @@ Workspace or user `mcp.json` example:
          "type": "stdio",
          "command": "npm",
          "args": ["run", "mcp:server"],
-         "cwd": "/home/i/repos/pro-api-sdk"
+         "cwd": "/home/i/repos/EasyEDA-MCP"
       }
    }
 }
@@ -426,6 +426,8 @@ Workspace or user `mcp.json` example:
 - `EASYEDA_MCP_BRIDGE_PORT`
 - `EASYEDA_MCP_BRIDGE_PATH`
 - `EASYEDA_MCP_BRIDGE_TIMEOUT_MS` base bridge timeout in milliseconds, default `30000`
+- `EASYEDA_MCP_GET_DOCUMENT_SOURCE_TIMEOUT_MS` optional per-method override for `get_document_source`
+- `EASYEDA_MCP_SET_DOCUMENT_SOURCE_TIMEOUT_MS` optional per-method override for `set_document_source`
 - `EASYEDA_MCP_HTTP_ENABLED`
 - `EASYEDA_MCP_HTTP_HOST`
 - `EASYEDA_MCP_HTTP_PORT`
@@ -433,7 +435,9 @@ Workspace or user `mcp.json` example:
 - `EASYEDA_MCP_LIVE_ATTACH_EXISTING`
 - `EASYEDA_MCP_LIVE_SERVER_URL`
 
-Slow bridge operations such as `get_document_source`, `set_document_source`, and primitive BBox queries use higher internal per-method timeout floors so large EasyEDA documents are less likely to fail spuriously.
+Slow bridge operations such as `get_document_source`, `set_document_source`, and primitive BBox queries use higher internal per-method timeout floors so large EasyEDA documents are less likely to fail spuriously. The current server defaults are `60000` for `get_document_source` and `120000` for `set_document_source`.
+
+If your EasyEDA build is still slow on large source writes, set `EASYEDA_MCP_SET_DOCUMENT_SOURCE_TIMEOUT_MS` explicitly when starting the server.
 
 Bridge requests are also serialized server-side so the EasyEDA runtime only handles one in-flight MCP operation at a time. This reduces instability from overlapping long-running bridge calls.
 
