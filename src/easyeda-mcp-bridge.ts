@@ -1,5 +1,6 @@
 import type { BridgeMethod, BridgeRequestEnvelope } from './mcp-bridge-protocol';
 
+import { getSchematicNetLabelCapabilitySummary } from './bridge-runtime-capabilities';
 import {
 	computeSourceRevision,
 	createBridgeError,
@@ -11,6 +12,8 @@ import {
 	parseBridgeEnvelope,
 	serializeBridgeEnvelope,
 } from './mcp-bridge-protocol';
+import { findAddedPrimitiveIds } from './primitive-id-diff';
+import { buildSchematicPinStubLine } from './schematic-pin-stub';
 
 interface BridgeState {
 	endpoint: string;
@@ -341,10 +344,20 @@ async function getHelloPayload(): Promise<Record<string, unknown>> {
 }
 
 function getCapabilities(): Record<string, unknown> {
+	const allBridgeMethods = getSupportedMethods();
+	const schematicNetLabelCapability = getSchematicNetLabelCapabilitySummary(getSchematicAttributeApiIfAvailable());
+	const hostRuntimeUnsupportedMethods = schematicNetLabelCapability.unsupportedMethods as BridgeMethod[];
+	const supportedMethods = allBridgeMethods.filter(method => !hostRuntimeUnsupportedMethods.includes(method));
+
 	return {
 		bridgeEndpoint: bridgeState.endpoint,
 		connected: bridgeState.connected,
-		supportedMethods: getSupportedMethods(),
+		supportedMethods,
+		allBridgeMethods,
+		hostRuntimeUnsupportedMethods,
+		hostRuntimeCapabilities: {
+			schematicNetLabel: schematicNetLabelCapability,
+		},
 		requiresExternalInteractionPermission: true,
 	};
 }
@@ -716,14 +729,16 @@ async function connectSchematicPinToNet(params: Record<string, unknown>): Promis
 	const pinNumber = getRequiredString(params.pinNumber, 'pinNumber');
 	const net = getRequiredString(params.net, 'net');
 	const pin = await requireSchematicPin(componentPrimitiveId, pinNumber);
-	const primitive = await createNetLabelForPin(pin, net, getOptionalNumber(params.labelOffsetX), getOptionalNumber(params.labelOffsetY));
+	const attachment = await createSchematicPinNetAttachment(pin, net, getOptionalNumber(params.labelOffsetX), getOptionalNumber(params.labelOffsetY));
 	const saved = await saveSchematicDocumentIfRequested(getOptionalBoolean(params.saveAfter));
 
 	return {
 		componentPrimitiveId,
 		pin: serializeSchematicPin(pin),
 		net,
-		primitive,
+		primitive: attachment.primitive,
+		attachmentKind: attachment.kind,
+		fallbackUsed: attachment.fallbackUsed,
 		saved,
 	};
 }
@@ -738,11 +753,13 @@ async function connectSchematicPinsToNets(params: Record<string, unknown>): Prom
 		const pinNumber = getRequiredString(connection.pinNumber, 'connections.pinNumber');
 		const net = getRequiredString(connection.net, 'connections.net');
 		const pin = await requireSchematicPin(componentPrimitiveId, pinNumber);
-		const primitive = await createNetLabelForPin(pin, net, getOptionalNumber(connection.labelOffsetX), getOptionalNumber(connection.labelOffsetY));
+		const attachment = await createSchematicPinNetAttachment(pin, net, getOptionalNumber(connection.labelOffsetX), getOptionalNumber(connection.labelOffsetY));
 		results.push({
 			pin: serializeSchematicPin(pin),
 			net,
-			primitive,
+			primitive: attachment.primitive,
+			attachmentKind: attachment.kind,
+			fallbackUsed: attachment.fallbackUsed,
 		});
 	}
 
@@ -769,11 +786,13 @@ async function connectSchematicPinsWithPrefix(params: Record<string, unknown>): 
 	for (const pinNumber of pinNumbers) {
 		const pin = await requireSchematicPin(componentPrimitiveId, pinNumber);
 		const net = `${netPrefix}${separator}${buildShiftedPinLabel(pinNumber, pinOffset)}`;
-		const primitive = await createNetLabelForPin(pin, net, labelOffsetX, labelOffsetY);
+		const attachment = await createSchematicPinNetAttachment(pin, net, labelOffsetX, labelOffsetY);
 		results.push({
 			pin: serializeSchematicPin(pin),
 			net,
-			primitive,
+			primitive: attachment.primitive,
+			attachmentKind: attachment.kind,
+			fallbackUsed: attachment.fallbackUsed,
 		});
 	}
 
@@ -868,18 +887,42 @@ async function getSchematicPrimitivesBBox(params: Record<string, unknown>): Prom
 
 async function addPcbComponent(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	const currentDocument = await requireCurrentDocumentType(EDMT_EditorDocumentType.PCB, 'PCB document required for PCB component placement');
-	const primitive = await eda.pcb_PrimitiveComponent.create(
-		getRequiredDeviceReference(params),
-		getRequiredString(params.layer, 'layer') as TPCB_LayersOfComponent,
-		getRequiredNumber(params.x, 'x'),
-		getRequiredNumber(params.y, 'y'),
-		getOptionalNumber(params.rotation),
-		getOptionalBoolean(params.primitiveLock),
-	);
+	const deviceReference = getRequiredDeviceReference(params);
+	const layer = getRequiredString(params.layer, 'layer') as TPCB_LayersOfComponent;
+	const x = getRequiredNumber(params.x, 'x');
+	const y = getRequiredNumber(params.y, 'y');
+	const rotation = getOptionalNumber(params.rotation);
+	const primitiveLock = getOptionalBoolean(params.primitiveLock);
+	const previousPrimitiveIds = await listRecoverablePcbComponentPrimitiveIds(layer, primitiveLock);
+	let primitive: unknown;
+	let recoveredFromError = false;
+	let recoveryError: string | undefined;
+
+	try {
+		primitive = await eda.pcb_PrimitiveComponent.create(
+			deviceReference,
+			layer,
+			x,
+			y,
+			rotation,
+			primitiveLock,
+		);
+	}
+	catch (error: unknown) {
+		primitive = await recoverCreatedPcbComponentFromHostError(previousPrimitiveIds, layer, primitiveLock);
+		if (!primitive)
+			throw error;
+
+		recoveredFromError = true;
+		recoveryError = toErrorMessage(error);
+	}
+
 	const saved = await savePcbDocumentIfRequested(currentDocument.uuid, getOptionalBoolean(params.saveAfter));
 
 	return {
 		primitive,
+		recoveredFromError,
+		recoveryError,
 		saved,
 	};
 }
@@ -1015,6 +1058,7 @@ async function addSchematicNetLabel(params: Record<string, unknown>): Promise<Re
 	const x = getRequiredNumber(params.x, 'x');
 	const y = getRequiredNumber(params.y, 'y');
 	const net = getRequiredString(params.net, 'net');
+	assertSchematicNetLabelCapability();
 	const primitive = await getSchematicAttributeApi().createNetLabel(x, y, net);
 	const saved = getOptionalBoolean(params.saveAfter) ? await eda.sch_Document.save() : undefined;
 
@@ -1938,6 +1982,31 @@ async function requirePcbPad(componentPrimitiveId: string, padNumber: string): P
 	return pad;
 }
 
+async function listRecoverablePcbComponentPrimitiveIds(
+	layer: TPCB_LayersOfComponent,
+	primitiveLock?: boolean,
+): Promise<string[]> {
+	return await eda.pcb_PrimitiveComponent.getAllPrimitiveId(layer, primitiveLock) ?? [];
+}
+
+async function recoverCreatedPcbComponentFromHostError(
+	previousPrimitiveIds: string[],
+	layer: TPCB_LayersOfComponent,
+	primitiveLock?: boolean,
+): Promise<unknown | undefined> {
+	try {
+		const nextPrimitiveIds = await listRecoverablePcbComponentPrimitiveIds(layer, primitiveLock);
+		const addedPrimitiveIds = findAddedPrimitiveIds(previousPrimitiveIds, nextPrimitiveIds);
+		if (addedPrimitiveIds.length !== 1)
+			return undefined;
+
+		return await eda.pcb_Primitive.getPrimitiveByPrimitiveId(addedPrimitiveIds[0]);
+	}
+	catch {
+		return undefined;
+	}
+}
+
 async function createNetLabelForPin(
 	pin: ISCH_PrimitiveComponentPin,
 	net: string,
@@ -1951,13 +2020,60 @@ async function createNetLabelForPin(
 	);
 }
 
+async function createSchematicPinNetAttachment(
+	pin: ISCH_PrimitiveComponentPin,
+	net: string,
+	labelOffsetX?: number,
+	labelOffsetY?: number,
+): Promise<{ primitive: unknown; kind: 'net-label' | 'wire-stub'; fallbackUsed: boolean }> {
+	const attributeApi = getSchematicAttributeApiIfAvailable();
+	if (attributeApi?.createNetLabel) {
+		return {
+			primitive: await createNetLabelForPin(pin, net, labelOffsetX, labelOffsetY),
+			kind: 'net-label',
+			fallbackUsed: false,
+		};
+	}
+
+	return {
+		primitive: await createSchematicWireStubForPin(pin, net, labelOffsetX, labelOffsetY),
+		kind: 'wire-stub',
+		fallbackUsed: true,
+	};
+}
+
+async function createSchematicWireStubForPin(
+	pin: ISCH_PrimitiveComponentPin,
+	net: string,
+	labelOffsetX?: number,
+	labelOffsetY?: number,
+): Promise<unknown> {
+	const [startX, startY, endX, endY] = buildSchematicPinStubLine(pin, labelOffsetX, labelOffsetY);
+	return eda.sch_PrimitiveWire.create([startX, startY, endX, endY], net);
+}
+
 function getSchematicAttributeApi(): typeof eda.sch_PrimitiveAttribute {
-	const attributeApi = (eda as typeof eda & {
-		sch_PrimitiveAttribute?: typeof eda.sch_PrimitiveAttribute;
-	}).sch_PrimitiveAttribute;
+	assertSchematicNetLabelCapability();
+	const attributeApi = getSchematicAttributeApiIfAvailable();
 	if (!attributeApi)
 		throw new Error('This EasyEDA runtime does not expose sch_PrimitiveAttribute. Net-label creation and modification are unavailable on this host build. Use wire- or source-based editing instead.');
 
+	if (typeof attributeApi.createNetLabel !== 'function')
+		throw new Error('This EasyEDA runtime does not expose sch_PrimitiveAttribute.createNetLabel. Net-label creation is unavailable on this host build. Use connect_schematic_pin_to_net or connect_schematic_pins_to_nets to fall back to wire-stub net attachment, or use wire- or source-based editing instead.');
+
+	return attributeApi;
+}
+
+function assertSchematicNetLabelCapability(): void {
+	const capabilitySummary = getSchematicNetLabelCapabilitySummary(getSchematicAttributeApiIfAvailable());
+	if (!capabilitySummary.supported)
+		throw new Error(`${capabilitySummary.warning} See get_capabilities.hostRuntimeUnsupportedMethods and get_capabilities.hostRuntimeCapabilities for live host support details.`);
+}
+
+function getSchematicAttributeApiIfAvailable(): (typeof eda.sch_PrimitiveAttribute & { createNetLabel?: typeof eda.sch_PrimitiveAttribute.createNetLabel }) | undefined {
+	const attributeApi = (eda as typeof eda & {
+		sch_PrimitiveAttribute?: typeof eda.sch_PrimitiveAttribute;
+	}).sch_PrimitiveAttribute;
 	return attributeApi;
 }
 

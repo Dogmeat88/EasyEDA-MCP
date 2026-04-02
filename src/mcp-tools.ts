@@ -813,7 +813,7 @@ export function registerEasyedaTools(server: ToolRegistrar, bridgeSession: Easye
 	server.registerTool(
 		'connect_schematic_pin_to_net',
 		{
-			description: 'Attach a net label at a schematic component pin location to connect the pin to a named net. Requires host support for schematic attribute net-label APIs.',
+			description: 'Attach a named net to a schematic component pin. Prefers a net label when supported by the host and falls back to a short net-assigned wire stub when net-label APIs are unavailable.',
 			inputSchema: connectSchematicPinToNetInputSchema,
 		},
 		async args => makeToolResult(await bridgeSession.call('connect_schematic_pin_to_net', args)),
@@ -822,7 +822,7 @@ export function registerEasyedaTools(server: ToolRegistrar, bridgeSession: Easye
 	server.registerTool(
 		'connect_schematic_pins_to_nets',
 		{
-			description: 'Attach net labels for multiple schematic component pins in one request using explicit pin-to-net mappings. Requires host support for schematic attribute net-label APIs.',
+			description: 'Attach named nets for multiple schematic component pins in one request using explicit pin-to-net mappings. Prefers net labels and falls back to short net-assigned wire stubs when net-label APIs are unavailable.',
 			inputSchema: connectSchematicPinsToNetsInputSchema,
 		},
 		async args => makeToolResult(await bridgeSession.call('connect_schematic_pins_to_nets', args)),
@@ -831,7 +831,7 @@ export function registerEasyedaTools(server: ToolRegistrar, bridgeSession: Easye
 	server.registerTool(
 		'connect_schematic_pins_with_prefix',
 		{
-			description: 'Attach net labels for multiple schematic component pins using a shared prefix and each pin number to derive net names. Requires host support for schematic attribute net-label APIs.',
+			description: 'Attach named nets for multiple schematic component pins using a shared prefix and each pin number to derive net names. Prefers net labels and falls back to short net-assigned wire stubs when net-label APIs are unavailable.',
 			inputSchema: connectSchematicPinsWithPrefixInputSchema,
 		},
 		async args => makeToolResult(await bridgeSession.call('connect_schematic_pins_with_prefix', args)),
@@ -894,7 +894,7 @@ export function registerEasyedaTools(server: ToolRegistrar, bridgeSession: Easye
 	server.registerTool(
 		'add_pcb_component',
 		{
-			description: 'Place a library device as a component on the active PCB document.',
+			description: 'Place a library device as a component on the active PCB document. If the host creates the component and then throws, the bridge attempts to recover the placed primitive from live PCB state.',
 			inputSchema: addPcbComponentInputSchema,
 		},
 		async args => makeToolResult(await bridgeSession.call('add_pcb_component', args)),
