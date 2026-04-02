@@ -13,6 +13,7 @@ import {
 	parseBridgeEnvelope,
 	serializeBridgeEnvelope,
 } from './mcp-bridge-protocol';
+import { getOptionalTrimmedStringIncludingEmpty, resolvePcbLineNetForCreate } from './pcb-line-net';
 import { findAddedPrimitiveIds } from './primitive-id-diff';
 import { buildSchematicPinStubLine } from './schematic-pin-stub';
 
@@ -1133,8 +1134,8 @@ async function addPcbText(params: Record<string, unknown>): Promise<Record<strin
 async function addPcbLine(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	await requireCurrentDocumentType(EDMT_EditorDocumentType.PCB, 'PCB document required for PCB line');
 	const currentDocument = await requireCurrentDocument();
-	const net = getRequiredString(params.net, 'net');
 	const layer = getRequiredString(params.layer, 'layer') as TPCB_LayersOfLine;
+	const net = resolvePcbLineNetForCreate(layer, params.net);
 	const startX = getRequiredNumber(params.startX, 'startX');
 	const startY = getRequiredNumber(params.startY, 'startY');
 	const endX = getRequiredNumber(params.endX, 'endX');
@@ -1374,7 +1375,7 @@ async function modifyPcbLine(params: Record<string, unknown>): Promise<Record<st
 	const currentDocument = await requireCurrentDocumentType(EDMT_EditorDocumentType.PCB, 'PCB document required for PCB line');
 	const primitiveId = getRequiredString(params.primitiveId, 'primitiveId');
 	const primitive = await eda.pcb_PrimitiveLine.modify(primitiveId, {
-		net: getOptionalString(params.net),
+		net: getOptionalTrimmedStringIncludingEmpty(params.net),
 		layer: getOptionalString(params.layer) as TPCB_LayersOfLine | undefined,
 		startX: getOptionalNumber(params.startX),
 		startY: getOptionalNumber(params.startY),

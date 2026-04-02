@@ -208,7 +208,7 @@ export const addSchematicWireInputSchema = z.object({
 });
 
 export const addPcbLineInputSchema = z.object({
-	net: z.string().min(1),
+	net: z.string().optional(),
 	layer: z.string().min(1),
 	startX: z.number(),
 	startY: z.number(),
@@ -335,7 +335,7 @@ export const modifySchematicWireInputSchema = z.object({
 
 export const modifyPcbLineInputSchema = z.object({
 	primitiveId: z.string().min(1),
-	net: z.string().min(1).optional(),
+	net: z.string().optional(),
 	layer: z.string().min(1).optional(),
 	startX: z.number().optional(),
 	startY: z.number().optional(),

@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { syncBridgeHeaderMenus } from '../src/bridge-header-menus';
 import { getSchematicNetLabelCapabilitySummary } from '../src/bridge-runtime-capabilities';
+import { getOptionalTrimmedStringIncludingEmpty, resolvePcbLineNetForCreate } from '../src/pcb-line-net';
 import { findAddedPrimitiveIds } from '../src/primitive-id-diff';
 import { buildSchematicPinStubLine } from '../src/schematic-pin-stub';
 
@@ -30,6 +31,21 @@ test('buildSchematicPinStubLine honors explicit offsets as direct relative endpo
 test('findAddedPrimitiveIds returns only newly created primitive ids in order', () => {
 	assert.deepEqual(findAddedPrimitiveIds(['e0', 'e1'], ['e0', 'e1', 'e2', 'e4']), ['e2', 'e4']);
 	assert.deepEqual(findAddedPrimitiveIds(['e0', 'e1'], ['e0', 'e1']), []);
+});
+
+test('resolvePcbLineNetForCreate defaults board outline lines to an empty net', () => {
+	assert.equal(resolvePcbLineNetForCreate('BoardOutLine', undefined), '');
+	assert.equal(resolvePcbLineNetForCreate('BoardOutLine', ''), '');
+	assert.equal(resolvePcbLineNetForCreate('BoardOutLine', '  '), '');
+	assert.equal(resolvePcbLineNetForCreate('TopLayer', 'GND'), 'GND');
+	assert.throws(() => resolvePcbLineNetForCreate('TopLayer', ''), /Expected a non-empty string for net/);
+});
+
+test('getOptionalTrimmedStringIncludingEmpty preserves empty strings so pcb line nets can be cleared', () => {
+	assert.equal(getOptionalTrimmedStringIncludingEmpty(' GND '), 'GND');
+	assert.equal(getOptionalTrimmedStringIncludingEmpty(''), '');
+	assert.equal(getOptionalTrimmedStringIncludingEmpty('   '), '');
+	assert.equal(getOptionalTrimmedStringIncludingEmpty(undefined), undefined);
 });
 
 test('getSchematicNetLabelCapabilitySummary reports live host limitations and fallbacks', () => {
