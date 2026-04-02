@@ -3,9 +3,11 @@ import test from 'node:test';
 
 import { computeSourceRevision } from '../src/mcp-bridge-protocol';
 import {
+	addPcbLineInputSchema,
 	deleteBoardInputSchema,
 	deletePrimitiveInputSchema,
 	easyedaToolNames,
+	modifyPcbLineInputSchema,
 	registerEasyedaTools,
 	searchLibraryDevicesInputSchema,
 	setDocumentSourceInputSchema,
@@ -123,6 +125,43 @@ test('delete input schemas accept skipConfirmation', () => {
 		deleteBoardInputSchema.parse({
 			boardName: 'Board1',
 			skipConfirmation: true,
+		});
+	});
+});
+
+test('pcb line schemas allow omitted or empty net values for board outline workflows', () => {
+	assert.doesNotThrow(() => {
+		addPcbLineInputSchema.parse({
+			layer: 'BoardOutLine',
+			startX: 0,
+			startY: 0,
+			endX: 100,
+			endY: 0,
+		});
+	});
+
+	assert.doesNotThrow(() => {
+		addPcbLineInputSchema.parse({
+			net: '',
+			layer: 'BoardOutLine',
+			startX: 0,
+			startY: 0,
+			endX: 100,
+			endY: 0,
+		});
+	});
+
+	assert.doesNotThrow(() => {
+		modifyPcbLineInputSchema.parse({
+			primitiveId: 'e3',
+			net: '',
+		});
+	});
+
+	assert.doesNotThrow(() => {
+		modifyPcbLineInputSchema.parse({
+			primitiveId: 'e3',
+			net: 'GND',
 		});
 	});
 });
