@@ -1,6 +1,7 @@
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
 
+import { syncBridgeHeaderMenus } from '../src/bridge-header-menus';
 import { getSchematicNetLabelCapabilitySummary } from '../src/bridge-runtime-capabilities';
 import { findAddedPrimitiveIds } from '../src/primitive-id-diff';
 import { buildSchematicPinStubLine } from '../src/schematic-pin-stub';
@@ -63,4 +64,33 @@ test('getSchematicNetLabelCapabilitySummary reports live host limitations and fa
 		unsupportedMethods: [],
 		recommendedFallbackToolsByMethod: {},
 	});
+});
+
+test('syncBridgeHeaderMenus reasserts the bridge header menu definition', async () => {
+	const replaceHeaderMenusCalls: unknown[] = [];
+	await syncBridgeHeaderMenus({
+		replaceHeaderMenus: async (menus: unknown) => {
+			replaceHeaderMenusCalls.push(menus);
+		},
+	});
+
+	assert.equal(replaceHeaderMenusCalls.length, 1);
+	assert.deepEqual(replaceHeaderMenusCalls[0], [
+		{
+			id: 'EasyEDA MCP Bridge',
+			title: 'EasyEDA MCP Bridge',
+			menuItems: [
+				{
+					id: 'MCP Bridge Reconnect',
+					title: 'Reconnect',
+					registerFn: 'bridgeReconnect',
+				},
+				{
+					id: 'MCP Bridge Status',
+					title: 'Status',
+					registerFn: 'bridgeStatus',
+				},
+			],
+		},
+	]);
 });

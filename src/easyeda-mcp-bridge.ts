@@ -1,5 +1,6 @@
 import type { BridgeMethod, BridgeRequestEnvelope } from './mcp-bridge-protocol';
 
+import { syncBridgeHeaderMenus } from './bridge-header-menus';
 import { getSchematicNetLabelCapabilitySummary } from './bridge-runtime-capabilities';
 import {
 	computeSourceRevision,
@@ -41,6 +42,7 @@ let pendingConnectionDiagnosticTimer: NodeJS.Timeout | undefined;
 export async function startEasyedaMcpBridge(forceReconnect = false): Promise<void> {
 	hydratePersistedBridgeState();
 	bridgeState.endpoint = getBridgeEndpoint();
+	await ensureBridgeHeaderMenus();
 	if (bridgeState.started && !forceReconnect)
 		return;
 
@@ -155,6 +157,15 @@ export function showBridgeStatus(): void {
 	];
 
 	eda.sys_Dialog.showInformationMessage(lines.join('\n'), 'MCP Bridge Status');
+}
+
+async function ensureBridgeHeaderMenus(): Promise<void> {
+	try {
+		await syncBridgeHeaderMenus(eda.sys_HeaderMenu);
+	}
+	catch (error: unknown) {
+		logInfo(`MCP bridge header menu sync failed: ${toErrorMessage(error)}`);
+	}
 }
 
 async function handleSocketMessage(rawMessage: string): Promise<void> {
