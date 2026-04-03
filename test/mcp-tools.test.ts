@@ -516,6 +516,65 @@ test('delete_pcb_component rejects host false success when verified cleanup stil
 	);
 });
 
+test('delete_pcb_component treats delayed native deletion as success when source-rewrite fallback fails', async () => {
+	const originalSource = [
+		'["DOCTYPE","PCB","1.8"]',
+		'["COMPONENT","e1",0,"TopLayer",0,0,0,{},0]',
+		'["ATTR","e1e0",0,"e1",4,null,null,"Device","old",0,0,"default",45,6,0,0,3,180,0,0,0,0]',
+		'["PAD_NET","e1","1","","e7"]',
+	].join('\n');
+	let listCallCount = 0;
+	const registeredTools = createRegisteredTools({
+		async call(method, params) {
+			if (method === 'delete_pcb_component')
+				throw new Error('EasyEDA bridge timed out waiting for delete_pcb_component');
+
+			if (method === 'list_pcb_primitive_ids') {
+				listCallCount += 1;
+				return {
+					family: 'component',
+					primitiveIds: listCallCount < 2 ? ['e1'] : [],
+				};
+			}
+
+			if (method === 'get_document_source') {
+				return {
+					source: originalSource,
+					sourceHash: computeSourceRevision(originalSource),
+					characters: originalSource.length,
+				};
+			}
+
+			if (method === 'set_document_source') {
+				return {
+					updated: true,
+					characters: originalSource.length,
+					sourceHash: computeSourceRevision('different-source'),
+					previousSourceHash: computeSourceRevision(originalSource),
+				};
+			}
+
+			return { method, params };
+		},
+		getConnectionState() {
+			return { connected: true };
+		},
+	});
+	const deleteTool = registeredTools.find(tool => tool.name === 'delete_pcb_component');
+
+	assert.ok(deleteTool);
+	const result = await deleteTool.handler({
+		primitiveId: 'e1',
+		skipConfirmation: true,
+	}) as { structuredContent: Record<string, unknown> };
+
+	assert.equal(result.structuredContent.deleted, true);
+	assert.equal(result.structuredContent.timeoutRecovered, true);
+	assert.equal(result.structuredContent.delayedReadbackRecovered, true);
+	assert.equal(result.structuredContent.postDeleteComponentPresent, false);
+	assert.match(String(result.structuredContent.recoveryError), /set_document_source reported success but active document still has/);
+});
+
 test('list_project_objects normalizes schematic and page names from title block metadata', async () => {
 	const registeredTools = createRegisteredTools({
 		async call(method, params) {

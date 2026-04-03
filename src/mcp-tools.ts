@@ -1371,6 +1371,26 @@ async function rewritePcbComponentDeletionFromSource(
 	};
 }
 
+async function recoverDelayedDeletedPcbComponent(
+	bridgeSession: EasyedaBridgeCaller,
+	primitiveId: string,
+	metadata: Record<string, unknown>,
+	recoveryError: unknown,
+): Promise<Record<string, unknown> | null> {
+	const componentPrimitiveIds = await listPcbComponentPrimitiveIds(bridgeSession);
+	if (!componentPrimitiveIds || componentPrimitiveIds.includes(primitiveId))
+		return null;
+
+	return {
+		...metadata,
+		primitiveId,
+		deleted: true,
+		postDeleteComponentPresent: false,
+		delayedReadbackRecovered: true,
+		recoveryError: recoveryError instanceof Error ? recoveryError.message : String(recoveryError),
+	};
+}
+
 async function callDeletePcbComponentWithRecovery(
 	bridgeSession: EasyedaBridgeCaller,
 	args: Record<string, unknown>,
@@ -1394,10 +1414,22 @@ async function callDeletePcbComponentWithRecovery(
 			};
 		}
 
-		return await rewritePcbComponentDeletionFromSource(bridgeSession, args, primitiveId, {
-			readbackVerified: true,
-			hostReportedDeleted: bridgeResult.deleted,
-		});
+		try {
+			return await rewritePcbComponentDeletionFromSource(bridgeSession, args, primitiveId, {
+				readbackVerified: true,
+				hostReportedDeleted: bridgeResult.deleted,
+			});
+		}
+		catch (recoveryError: unknown) {
+			const delayedRecovery = await recoverDelayedDeletedPcbComponent(bridgeSession, primitiveId, {
+				readbackVerified: true,
+				hostReportedDeleted: bridgeResult.deleted,
+			}, recoveryError);
+			if (delayedRecovery)
+				return delayedRecovery;
+
+			throw recoveryError;
+		}
 	}
 	catch (error: unknown) {
 		if (!(error instanceof Error) || !error.message.includes('timed out waiting for delete_pcb_component'))
@@ -1418,10 +1450,22 @@ async function callDeletePcbComponentWithRecovery(
 			};
 		}
 
-		return await rewritePcbComponentDeletionFromSource(bridgeSession, args, primitiveId, {
-			timeoutRecovered: true,
-			readbackVerified: true,
-		});
+		try {
+			return await rewritePcbComponentDeletionFromSource(bridgeSession, args, primitiveId, {
+				timeoutRecovered: true,
+				readbackVerified: true,
+			});
+		}
+		catch (recoveryError: unknown) {
+			const delayedRecovery = await recoverDelayedDeletedPcbComponent(bridgeSession, primitiveId, {
+				timeoutRecovered: true,
+				readbackVerified: true,
+			}, recoveryError);
+			if (delayedRecovery)
+				return delayedRecovery;
+
+			throw recoveryError;
+		}
 	}
 }
 
