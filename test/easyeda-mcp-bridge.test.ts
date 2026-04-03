@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { syncBridgeHeaderMenus } from '../src/bridge-header-menus';
 import { getSchematicNetLabelCapabilitySummary } from '../src/bridge-runtime-capabilities';
+import { withHostMethodTimeout } from '../src/host-method-timeout';
 import { getOptionalTrimmedStringIncludingEmpty, resolvePcbLineNetForCreate } from '../src/pcb-line-net';
 import { findAddedPrimitiveIds } from '../src/primitive-id-diff';
 import { buildSchematicPinStubLine } from '../src/schematic-pin-stub';
@@ -109,4 +110,21 @@ test('syncBridgeHeaderMenus reasserts the bridge header menu definition', async 
 			],
 		},
 	]);
+});
+
+test('withHostMethodTimeout resolves when the host call completes in time', async () => {
+	const result = await withHostMethodTimeout('host.method', 50, async () => 'ok');
+	assert.equal(result, 'ok');
+});
+
+test('withHostMethodTimeout rejects with a compatibility hint when the host call hangs', async () => {
+	await assert.rejects(
+		() => withHostMethodTimeout(
+			'pcb_PrimitiveString.create',
+			10,
+			() => new Promise(() => {}),
+			'Host text APIs are unavailable.',
+		),
+		/pcb_PrimitiveString\.create timed out after 10ms\. Host text APIs are unavailable\./,
+	);
 });

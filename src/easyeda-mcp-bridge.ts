@@ -2,6 +2,7 @@ import type { BridgeMethod, BridgeRequestEnvelope } from './mcp-bridge-protocol'
 
 import { syncBridgeHeaderMenus } from './bridge-header-menus';
 import { getSchematicNetLabelCapabilitySummary } from './bridge-runtime-capabilities';
+import { withHostMethodTimeout } from './host-method-timeout';
 import {
 	computeSourceRevision,
 	createBridgeError,
@@ -39,6 +40,9 @@ const bridgeState: BridgeState = {
 };
 
 let pendingConnectionDiagnosticTimer: NodeJS.Timeout | undefined;
+
+const PCB_TEXT_HOST_TIMEOUT_MS = 4_000;
+const PCB_TEXT_HOST_TIMEOUT_HINT = 'This EasyEDA host session is not responding to pcb_PrimitiveString APIs. PCB text tools are unavailable in this session. Try reopening the PCB document or restarting the EasyEDA extension host.';
 
 export async function startEasyedaMcpBridge(forceReconnect = false): Promise<void> {
 	hydratePersistedBridgeState();
@@ -1108,20 +1112,25 @@ async function addPcbText(params: Record<string, unknown>): Promise<Record<strin
 	const fontFamily = getRequiredString(params.fontFamily, 'fontFamily');
 	const fontSize = getRequiredNumber(params.fontSize, 'fontSize');
 	const lineWidth = getRequiredNumber(params.lineWidth, 'lineWidth');
-	const primitive = await eda.pcb_PrimitiveString.create(
-		layer,
-		x,
-		y,
-		text,
-		fontFamily,
-		fontSize,
-		lineWidth,
-		(getOptionalNumber(params.alignMode) ?? 4) as EPCB_PrimitiveStringAlignMode,
-		getOptionalNumber(params.rotation) ?? 0,
-		getOptionalBoolean(params.reverse) ?? false,
-		getOptionalNumber(params.expansion) ?? 0,
-		getOptionalBoolean(params.mirror) ?? false,
-		getOptionalBoolean(params.primitiveLock) ?? false,
+	const primitive = await withHostMethodTimeout(
+		'pcb_PrimitiveString.create',
+		PCB_TEXT_HOST_TIMEOUT_MS,
+		() => eda.pcb_PrimitiveString.create(
+			layer,
+			x,
+			y,
+			text,
+			fontFamily,
+			fontSize,
+			lineWidth,
+			(getOptionalNumber(params.alignMode) ?? 4) as EPCB_PrimitiveStringAlignMode,
+			getOptionalNumber(params.rotation) ?? 0,
+			getOptionalBoolean(params.reverse) ?? false,
+			getOptionalNumber(params.expansion) ?? 0,
+			getOptionalBoolean(params.mirror) ?? false,
+			getOptionalBoolean(params.primitiveLock) ?? false,
+		),
+		PCB_TEXT_HOST_TIMEOUT_HINT,
 	);
 	const saved = getOptionalBoolean(params.saveAfter) ? await eda.pcb_Document.save(currentDocument.uuid) : undefined;
 
@@ -1172,9 +1181,14 @@ async function listPcbPrimitiveIds(params: Record<string, unknown>): Promise<Rec
 			);
 			break;
 		case 'text':
-			primitiveIds = await eda.pcb_PrimitiveString.getAllPrimitiveId(
-				getOptionalString(params.layer) as TPCB_LayersOfImage | undefined,
-				getOptionalBoolean(params.primitiveLock),
+			primitiveIds = await withHostMethodTimeout(
+				'pcb_PrimitiveString.getAllPrimitiveId',
+				PCB_TEXT_HOST_TIMEOUT_MS,
+				() => eda.pcb_PrimitiveString.getAllPrimitiveId(
+					getOptionalString(params.layer) as TPCB_LayersOfImage | undefined,
+					getOptionalBoolean(params.primitiveLock),
+				),
+				PCB_TEXT_HOST_TIMEOUT_HINT,
 			);
 			break;
 		case 'component':
@@ -1410,21 +1424,26 @@ async function deletePcbLine(params: Record<string, unknown>): Promise<Record<st
 async function modifyPcbText(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	const currentDocument = await requireCurrentDocumentType(EDMT_EditorDocumentType.PCB, 'PCB document required for PCB text');
 	const primitiveId = getRequiredString(params.primitiveId, 'primitiveId');
-	const primitive = await eda.pcb_PrimitiveString.modify(primitiveId, {
-		layer: getOptionalString(params.layer) as TPCB_LayersOfImage | undefined,
-		x: getOptionalNumber(params.x),
-		y: getOptionalNumber(params.y),
-		text: getOptionalString(params.text),
-		fontFamily: getOptionalString(params.fontFamily),
-		fontSize: getOptionalNumber(params.fontSize),
-		lineWidth: getOptionalNumber(params.lineWidth),
-		alignMode: getOptionalNumber(params.alignMode) as EPCB_PrimitiveStringAlignMode | undefined,
-		rotation: getOptionalNumber(params.rotation),
-		reverse: getOptionalBoolean(params.reverse),
-		expansion: getOptionalNumber(params.expansion),
-		mirror: getOptionalBoolean(params.mirror),
-		primitiveLock: getOptionalBoolean(params.primitiveLock),
-	});
+	const primitive = await withHostMethodTimeout(
+		'pcb_PrimitiveString.modify',
+		PCB_TEXT_HOST_TIMEOUT_MS,
+		() => eda.pcb_PrimitiveString.modify(primitiveId, {
+			layer: getOptionalString(params.layer) as TPCB_LayersOfImage | undefined,
+			x: getOptionalNumber(params.x),
+			y: getOptionalNumber(params.y),
+			text: getOptionalString(params.text),
+			fontFamily: getOptionalString(params.fontFamily),
+			fontSize: getOptionalNumber(params.fontSize),
+			lineWidth: getOptionalNumber(params.lineWidth),
+			alignMode: getOptionalNumber(params.alignMode) as EPCB_PrimitiveStringAlignMode | undefined,
+			rotation: getOptionalNumber(params.rotation),
+			reverse: getOptionalBoolean(params.reverse),
+			expansion: getOptionalNumber(params.expansion),
+			mirror: getOptionalBoolean(params.mirror),
+			primitiveLock: getOptionalBoolean(params.primitiveLock),
+		}),
+		PCB_TEXT_HOST_TIMEOUT_HINT,
+	);
 	const saved = await savePcbDocumentIfRequested(currentDocument.uuid, getOptionalBoolean(params.saveAfter));
 
 	return {
@@ -1438,7 +1457,12 @@ async function deletePcbText(params: Record<string, unknown>): Promise<Record<st
 	const currentDocument = await requireCurrentDocumentType(EDMT_EditorDocumentType.PCB, 'PCB document required for PCB text deletion');
 	const primitiveId = getRequiredString(params.primitiveId, 'primitiveId');
 	await maybeConfirmDestructiveAction(params, 'Delete PCB Text', `Delete PCB text primitive ${primitiveId}?`, 'Delete');
-	const deleted = await eda.pcb_PrimitiveString.delete(primitiveId);
+	const deleted = await withHostMethodTimeout(
+		'pcb_PrimitiveString.delete',
+		PCB_TEXT_HOST_TIMEOUT_MS,
+		() => eda.pcb_PrimitiveString.delete(primitiveId),
+		PCB_TEXT_HOST_TIMEOUT_HINT,
+	);
 	const saved = await savePcbDocumentIfRequested(currentDocument.uuid, getOptionalBoolean(params.saveAfter));
 
 	return {
