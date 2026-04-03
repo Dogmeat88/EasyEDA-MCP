@@ -915,7 +915,7 @@ export function registerEasyedaTools(server: ToolRegistrar, bridgeSession: Easye
 			description: 'Delete a component primitive from the active PCB document. Set skipConfirmation to true to suppress the bridge-side delete prompt.',
 			inputSchema: deletePrimitiveInputSchema,
 		},
-		async args => makeToolResult(await bridgeSession.call('delete_pcb_component', args)),
+		async args => makeToolResult(await callDeletePcbComponentWithRecovery(bridgeSession, args)),
 	);
 
 	server.registerTool(
@@ -1255,38 +1255,223 @@ function normalizeProjectObjects(value: unknown): Record<string, unknown> {
 	};
 }
 
+function parseSourceLine(line: string): unknown[] | undefined {
+	if (!line.startsWith('['))
+		return undefined;
+
+	try {
+		const parsed = JSON.parse(line);
+		return Array.isArray(parsed) ? parsed : undefined;
+	}
+	catch {
+		return undefined;
+	}
+}
+
+function removePcbComponentFromSource(source: string, primitiveId: string): string | undefined {
+	const lines = source.split('\n');
+	let removed = false;
+	const filtered = lines.filter((line) => {
+		const parsed = parseSourceLine(line);
+		if (!parsed)
+			return true;
+
+		const tag = parsed[0];
+		if (tag === 'COMPONENT' && parsed[1] === primitiveId) {
+			removed = true;
+			return false;
+		}
+
+		if (tag === 'ATTR' && parsed[3] === primitiveId) {
+			removed = true;
+			return false;
+		}
+
+		if (tag === 'PAD_NET' && parsed[1] === primitiveId) {
+			removed = true;
+			return false;
+		}
+
+		return true;
+	});
+
+	if (!removed)
+		return undefined;
+
+	return filtered.join('\n');
+}
+
+async function getDocumentSourceSnapshot(bridgeSession: EasyedaBridgeCaller): Promise<{
+	source: string;
+	sourceHash: string;
+	characters: number;
+}> {
+	const currentDocumentSource = asRecord(await bridgeSession.call('get_document_source'));
+	const source = typeof currentDocumentSource?.source === 'string'
+		? currentDocumentSource.source
+		: undefined;
+	const sourceHash = typeof currentDocumentSource?.sourceHash === 'string'
+		? currentDocumentSource.sourceHash
+		: undefined;
+	if (typeof source !== 'string' || typeof sourceHash !== 'string')
+		throw new Error('EasyEDA bridge returned an invalid document source snapshot');
+
+	return {
+		source,
+		sourceHash,
+		characters: typeof currentDocumentSource?.characters === 'number' ? currentDocumentSource.characters : source.length,
+	};
+}
+
+async function listPcbComponentPrimitiveIds(bridgeSession: EasyedaBridgeCaller): Promise<string[] | undefined> {
+	const response = asRecord(await bridgeSession.call('list_pcb_primitive_ids', { family: 'component' }));
+	const primitiveIds = response?.primitiveIds;
+	if (!Array.isArray(primitiveIds))
+		return undefined;
+
+	return primitiveIds.filter((value): value is string => typeof value === 'string');
+}
+
+async function rewritePcbComponentDeletionFromSource(
+	bridgeSession: EasyedaBridgeCaller,
+	args: Record<string, unknown>,
+	primitiveId: string,
+	metadata: Record<string, unknown> = {},
+): Promise<Record<string, unknown>> {
+	const currentDocumentSource = await getDocumentSourceSnapshot(bridgeSession);
+	const cleanedSource = removePcbComponentFromSource(currentDocumentSource.source, primitiveId);
+	if (typeof cleanedSource !== 'string') {
+		throw new TypeError(`delete_pcb_component could not remove primitive ${primitiveId} from the active document source`);
+	}
+
+	const rewriteResult = normalizeStructuredContent(await callSetDocumentSourceWithRecovery(bridgeSession, {
+		source: cleanedSource,
+		expectedSourceHash: currentDocumentSource.sourceHash,
+		skipConfirmation: true,
+	}));
+
+	const updatedComponentPrimitiveIds = await listPcbComponentPrimitiveIds(bridgeSession);
+	if (updatedComponentPrimitiveIds?.includes(primitiveId)) {
+		throw new Error(`delete_pcb_component reported success but primitive ${primitiveId} still exists after verified source rewrite`);
+	}
+
+	let saved: unknown;
+	if (args.saveAfter === true)
+		saved = asRecord(await bridgeSession.call('save_active_document'))?.saved;
+
+	return {
+		primitiveId,
+		deleted: true,
+		saved,
+		...metadata,
+		sourceRewriteRecovered: true,
+		postDeleteComponentPresent: false,
+		sourceHash: rewriteResult.sourceHash,
+		previousSourceHash: rewriteResult.previousSourceHash,
+	};
+}
+
+async function callDeletePcbComponentWithRecovery(
+	bridgeSession: EasyedaBridgeCaller,
+	args: Record<string, unknown>,
+): Promise<unknown> {
+	const primitiveId = typeof args.primitiveId === 'string' ? args.primitiveId : undefined;
+
+	try {
+		const bridgeResult = normalizeStructuredContent(await bridgeSession.call('delete_pcb_component', args));
+		if (typeof primitiveId !== 'string')
+			return bridgeResult;
+
+		const componentPrimitiveIds = await listPcbComponentPrimitiveIds(bridgeSession);
+		if (componentPrimitiveIds && !componentPrimitiveIds.includes(primitiveId)) {
+			return {
+				...bridgeResult,
+				primitiveId,
+				deleted: true,
+				postDeleteComponentPresent: false,
+				readbackVerified: true,
+				hostReportedDeleted: bridgeResult.deleted,
+			};
+		}
+
+		return await rewritePcbComponentDeletionFromSource(bridgeSession, args, primitiveId, {
+			readbackVerified: true,
+			hostReportedDeleted: bridgeResult.deleted,
+		});
+	}
+	catch (error: unknown) {
+		if (!(error instanceof Error) || !error.message.includes('timed out waiting for delete_pcb_component'))
+			throw error;
+
+		if (typeof primitiveId !== 'string')
+			throw error;
+
+		const componentPrimitiveIds = await listPcbComponentPrimitiveIds(bridgeSession);
+
+		if (componentPrimitiveIds && !componentPrimitiveIds.includes(primitiveId)) {
+			return {
+				primitiveId,
+				deleted: true,
+				timeoutRecovered: true,
+				readbackVerified: true,
+				postDeleteComponentPresent: false,
+			};
+		}
+
+		return await rewritePcbComponentDeletionFromSource(bridgeSession, args, primitiveId, {
+			timeoutRecovered: true,
+			readbackVerified: true,
+		});
+	}
+}
+
 async function callSetDocumentSourceWithRecovery(
 	bridgeSession: EasyedaBridgeCaller,
 	args: Record<string, unknown>,
 ): Promise<unknown> {
+	const desiredSource = typeof args.source === 'string' ? args.source : undefined;
+	if (typeof desiredSource !== 'string')
+		throw new Error('set_document_source requires a string source');
+
+	const desiredSourceHash = computeSourceRevision(desiredSource);
+
 	try {
-		return await bridgeSession.call('set_document_source', args);
+		const bridgeResult = normalizeStructuredContent(await bridgeSession.call('set_document_source', args));
+		const currentDocumentSource = await getDocumentSourceSnapshot(bridgeSession);
+		if (currentDocumentSource.sourceHash !== desiredSourceHash) {
+			throw new Error(
+				`set_document_source reported success but active document still has ${currentDocumentSource.sourceHash} instead of ${desiredSourceHash}`,
+			);
+		}
+
+		return {
+			...bridgeResult,
+			updated: true,
+			characters: currentDocumentSource.characters,
+			sourceHash: currentDocumentSource.sourceHash,
+			previousSourceHash: typeof bridgeResult.previousSourceHash === 'string'
+				? bridgeResult.previousSourceHash
+				: typeof args.expectedSourceHash === 'string'
+					? args.expectedSourceHash
+					: undefined,
+			readbackVerified: true,
+			hostReportedUpdated: bridgeResult.updated,
+		};
 	}
 	catch (error: unknown) {
 		if (!(error instanceof Error) || !error.message.includes('timed out waiting for set_document_source'))
 			throw error;
 
-		const desiredSource = typeof args.source === 'string' ? args.source : undefined;
-		if (typeof desiredSource !== 'string')
-			throw error;
-
-		let currentDocumentSource: Record<string, unknown> | undefined;
-		try {
-			currentDocumentSource = asRecord(await bridgeSession.call('get_document_source'));
-		}
-		catch {
-			throw error;
-		}
-
-		const desiredSourceHash = computeSourceRevision(desiredSource);
-		if (currentDocumentSource?.sourceHash !== desiredSourceHash)
+		const currentDocumentSource = await getDocumentSourceSnapshot(bridgeSession);
+		if (currentDocumentSource.sourceHash !== desiredSourceHash)
 			throw error;
 
 		return {
 			updated: true,
-			characters: desiredSource.length,
+			characters: currentDocumentSource.characters,
 			sourceHash: desiredSourceHash,
 			previousSourceHash: typeof args.expectedSourceHash === 'string' ? args.expectedSourceHash : undefined,
+			readbackVerified: true,
 			timeoutRecovered: true,
 		};
 	}

@@ -199,8 +199,321 @@ test('set_document_source recovers when EasyEDA applies the source before the br
 
 	assert.equal(result.structuredContent.updated, true);
 	assert.equal(result.structuredContent.sourceHash, sourceHash);
+	assert.equal(result.structuredContent.readbackVerified, true);
 	assert.equal(result.structuredContent.timeoutRecovered, true);
 	assert.equal(result.structuredContent.previousSourceHash, 'old-hash');
+});
+
+test('set_document_source verifies readback even when the bridge reports updated false', async () => {
+	const source = 'updated-source';
+	const sourceHash = computeSourceRevision(source);
+	const registeredTools = createRegisteredTools({
+		async call(method, params) {
+			if (method === 'set_document_source') {
+				return {
+					updated: false,
+					characters: source.length,
+					sourceHash: 'stale-host-hash',
+					previousSourceHash: 'old-hash',
+				};
+			}
+
+			if (method === 'get_document_source') {
+				return {
+					source,
+					sourceHash,
+					characters: source.length,
+				};
+			}
+
+			return { method, params };
+		},
+		getConnectionState() {
+			return { connected: true };
+		},
+	});
+	const setDocumentSourceTool = registeredTools.find(tool => tool.name === 'set_document_source');
+
+	assert.ok(setDocumentSourceTool);
+	const result = await setDocumentSourceTool.handler({
+		source,
+		expectedSourceHash: 'old-hash',
+		skipConfirmation: true,
+	}) as { structuredContent: Record<string, unknown> };
+
+	assert.equal(result.structuredContent.updated, true);
+	assert.equal(result.structuredContent.sourceHash, sourceHash);
+	assert.equal(result.structuredContent.readbackVerified, true);
+	assert.equal(result.structuredContent.hostReportedUpdated, false);
+	assert.equal(result.structuredContent.previousSourceHash, 'old-hash');
+});
+
+test('set_document_source rejects host false success when readback does not match the requested source', async () => {
+	const source = 'updated-source';
+	const registeredTools = createRegisteredTools({
+		async call(method, params) {
+			if (method === 'set_document_source') {
+				return {
+					updated: true,
+					characters: source.length,
+					sourceHash: computeSourceRevision(source),
+					previousSourceHash: 'old-hash',
+				};
+			}
+
+			if (method === 'get_document_source') {
+				return {
+					source: 'old-source',
+					sourceHash: computeSourceRevision('old-source'),
+					characters: 'old-source'.length,
+				};
+			}
+
+			return { method, params };
+		},
+		getConnectionState() {
+			return { connected: true };
+		},
+	});
+	const setDocumentSourceTool = registeredTools.find(tool => tool.name === 'set_document_source');
+
+	assert.ok(setDocumentSourceTool);
+	await assert.rejects(
+		() => setDocumentSourceTool.handler({
+			source,
+			expectedSourceHash: 'old-hash',
+			skipConfirmation: true,
+		}),
+		/set_document_source reported success but active document still has/,
+	);
+});
+
+test('delete_pcb_component recovers when the primitive disappears before the timeout response returns', async () => {
+	const registeredTools = createRegisteredTools({
+		async call(method, params) {
+			if (method === 'delete_pcb_component')
+				throw new Error('EasyEDA bridge timed out waiting for delete_pcb_component');
+
+			if (method === 'list_pcb_primitive_ids') {
+				return {
+					family: 'component',
+					primitiveIds: ['e17', 'e18', 'e19'],
+				};
+			}
+
+			return { method, params };
+		},
+		getConnectionState() {
+			return { connected: true };
+		},
+	});
+	const deleteTool = registeredTools.find(tool => tool.name === 'delete_pcb_component');
+
+	assert.ok(deleteTool);
+	const result = await deleteTool.handler({
+		primitiveId: 'e0',
+		skipConfirmation: true,
+	}) as { structuredContent: Record<string, unknown> };
+
+	assert.equal(result.structuredContent.deleted, true);
+	assert.equal(result.structuredContent.timeoutRecovered, true);
+	assert.equal(result.structuredContent.readbackVerified, true);
+	assert.equal(result.structuredContent.postDeleteComponentPresent, false);
+	assert.equal(result.structuredContent.sourceRewriteRecovered, undefined);
+});
+
+test('delete_pcb_component falls back to source cleanup when timeout leaves the primitive in source', async () => {
+	const originalSource = [
+		'["DOCTYPE","PCB","1.8"]',
+		'["COMPONENT","e1",0,"TopLayer",0,0,0,{},0]',
+		'["ATTR","e1e0",0,"e1",4,null,null,"Device","old",0,0,"default",45,6,0,0,3,180,0,0,0,0]',
+		'["PAD_NET","e1","1","","e7"]',
+		'["COMPONENT","e17",0,1,10,10,0,{},0]',
+		'["ATTR","e17e0",0,"e17",3,null,null,"Device","keep",0,0,"default",45,6,0,0,3,0,0,0,0,0]',
+	].join('\n');
+	const originalSourceHash = computeSourceRevision(originalSource);
+	let updatedSource = originalSource;
+	const callLog: Array<{ method: string; params?: Record<string, unknown> }> = [];
+	const registeredTools = createRegisteredTools({
+		async call(method, params) {
+			callLog.push({ method, params });
+
+			if (method === 'delete_pcb_component')
+				throw new Error('EasyEDA bridge timed out waiting for delete_pcb_component');
+
+			if (method === 'list_pcb_primitive_ids') {
+				return {
+					family: 'component',
+					primitiveIds: updatedSource.includes('["COMPONENT","e1"') ? ['e1', 'e17'] : ['e17'],
+				};
+			}
+
+			if (method === 'get_document_source') {
+				return {
+					source: updatedSource,
+					sourceHash: computeSourceRevision(updatedSource),
+					characters: updatedSource.length,
+				};
+			}
+
+			if (method === 'set_document_source') {
+				updatedSource = String(params?.source ?? '');
+				return {
+					updated: true,
+					characters: updatedSource.length,
+					sourceHash: computeSourceRevision(updatedSource),
+					previousSourceHash: originalSourceHash,
+				};
+			}
+
+			if (method === 'save_active_document')
+				return { saved: true };
+
+			return { method, params };
+		},
+		getConnectionState() {
+			return { connected: true };
+		},
+	});
+	const deleteTool = registeredTools.find(tool => tool.name === 'delete_pcb_component');
+
+	assert.ok(deleteTool);
+	const result = await deleteTool.handler({
+		primitiveId: 'e1',
+		saveAfter: true,
+		skipConfirmation: true,
+	}) as { structuredContent: Record<string, unknown> };
+
+	assert.equal(result.structuredContent.deleted, true);
+	assert.equal(result.structuredContent.timeoutRecovered, true);
+	assert.equal(result.structuredContent.sourceRewriteRecovered, true);
+	assert.equal(result.structuredContent.saved, true);
+	assert.equal(updatedSource.includes('["COMPONENT","e1"'), false);
+	assert.equal(updatedSource.includes('["ATTR","e1e0"'), false);
+	assert.equal(updatedSource.includes('["PAD_NET","e1"'), false);
+	assert.equal(updatedSource.includes('["COMPONENT","e17"'), true);
+	assert.equal(updatedSource.includes('["ATTR","e17e0"'), true);
+
+	const setDocumentSourceCall = callLog.find(entry => entry.method === 'set_document_source');
+	assert.ok(setDocumentSourceCall);
+	assert.equal(setDocumentSourceCall?.params?.expectedSourceHash, originalSourceHash);
+});
+
+test('delete_pcb_component falls back to source cleanup when the bridge reports success but the primitive remains present', async () => {
+	const originalSource = [
+		'["DOCTYPE","PCB","1.8"]',
+		'["COMPONENT","e1",0,"TopLayer",0,0,0,{},0]',
+		'["ATTR","e1e0",0,"e1",4,null,null,"Device","old",0,0,"default",45,6,0,0,3,180,0,0,0,0]',
+		'["PAD_NET","e1","1","","e7"]',
+		'["COMPONENT","e17",0,1,10,10,0,{},0]',
+		'["ATTR","e17e0",0,"e17",3,null,null,"Device","keep",0,0,"default",45,6,0,0,3,0,0,0,0,0]',
+	].join('\n');
+	const originalSourceHash = computeSourceRevision(originalSource);
+	let updatedSource = originalSource;
+	const registeredTools = createRegisteredTools({
+		async call(method, params) {
+			if (method === 'delete_pcb_component')
+				return { primitiveId: 'e1', deleted: true, saved: false };
+
+			if (method === 'list_pcb_primitive_ids') {
+				return {
+					family: 'component',
+					primitiveIds: updatedSource.includes('["COMPONENT","e1"') ? ['e1', 'e17'] : ['e17'],
+				};
+			}
+
+			if (method === 'get_document_source') {
+				return {
+					source: updatedSource,
+					sourceHash: computeSourceRevision(updatedSource),
+					characters: updatedSource.length,
+				};
+			}
+
+			if (method === 'set_document_source') {
+				updatedSource = String(params?.source ?? '');
+				return {
+					updated: true,
+					characters: updatedSource.length,
+					sourceHash: computeSourceRevision(updatedSource),
+					previousSourceHash: originalSourceHash,
+				};
+			}
+
+			return { method, params };
+		},
+		getConnectionState() {
+			return { connected: true };
+		},
+	});
+	const deleteTool = registeredTools.find(tool => tool.name === 'delete_pcb_component');
+
+	assert.ok(deleteTool);
+	const result = await deleteTool.handler({
+		primitiveId: 'e1',
+		skipConfirmation: true,
+	}) as { structuredContent: Record<string, unknown> };
+
+	assert.equal(result.structuredContent.deleted, true);
+	assert.equal(result.structuredContent.readbackVerified, true);
+	assert.equal(result.structuredContent.hostReportedDeleted, true);
+	assert.equal(result.structuredContent.sourceRewriteRecovered, true);
+	assert.equal(updatedSource.includes('["COMPONENT","e1"'), false);
+	assert.equal(updatedSource.includes('["COMPONENT","e17"'), true);
+});
+
+test('delete_pcb_component rejects host false success when verified cleanup still leaves the primitive present', async () => {
+	const originalSource = [
+		'["DOCTYPE","PCB","1.8"]',
+		'["COMPONENT","e1",0,"TopLayer",0,0,0,{},0]',
+		'["ATTR","e1e0",0,"e1",4,null,null,"Device","old",0,0,"default",45,6,0,0,3,180,0,0,0,0]',
+		'["PAD_NET","e1","1","","e7"]',
+	].join('\n');
+	const registeredTools = createRegisteredTools({
+		async call(method, params) {
+			if (method === 'delete_pcb_component')
+				return { primitiveId: 'e1', deleted: true, saved: false };
+
+			if (method === 'list_pcb_primitive_ids') {
+				return {
+					family: 'component',
+					primitiveIds: ['e1'],
+				};
+			}
+
+			if (method === 'get_document_source') {
+				return {
+					source: originalSource,
+					sourceHash: computeSourceRevision(originalSource),
+					characters: originalSource.length,
+				};
+			}
+
+			if (method === 'set_document_source') {
+				return {
+					updated: true,
+					characters: originalSource.length,
+					sourceHash: computeSourceRevision('different-source'),
+					previousSourceHash: computeSourceRevision(originalSource),
+				};
+			}
+
+			return { method, params };
+		},
+		getConnectionState() {
+			return { connected: true };
+		},
+	});
+	const deleteTool = registeredTools.find(tool => tool.name === 'delete_pcb_component');
+
+	assert.ok(deleteTool);
+	await assert.rejects(
+		() => deleteTool.handler({
+			primitiveId: 'e1',
+			skipConfirmation: true,
+		}),
+		/set_document_source reported success but active document still has/,
+	);
 });
 
 test('list_project_objects normalizes schematic and page names from title block metadata', async () => {
