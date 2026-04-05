@@ -16,6 +16,7 @@ import {
 } from './mcp-bridge-protocol';
 import { getOptionalTrimmedStringIncludingEmpty, resolvePcbLineNetForCreate } from './pcb-line-net';
 import { findAddedPrimitiveIds } from './primitive-id-diff';
+import { getImportReadbackStatus, verifyCreatedBoard, verifyCreatedPcb } from './project-readback-guards';
 import { buildSchematicPinStubLine } from './schematic-pin-stub';
 
 interface BridgeState {
@@ -224,6 +225,8 @@ async function dispatchMethod(method: BridgeMethod, params: Record<string, unkno
 			return createBoard(params);
 		case 'create_pcb':
 			return createPcb(params);
+		case 'import_schematic_to_pcb':
+			return importSchematicToPcb(params);
 		case 'create_panel':
 			return createPanel();
 		case 'create_schematic':
@@ -491,10 +494,14 @@ async function saveActiveDocument(): Promise<Record<string, unknown>> {
 async function createPcb(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	const boardName = getOptionalString(params.boardName);
 	const pcbUuid = await eda.dmt_Pcb.createPcb(boardName);
+	const projectInventory = await getVerifiedProjectInventory();
+	const { parentBoardName, readbackVerified } = verifyCreatedPcb(projectInventory.pcbs, pcbUuid, boardName);
 
 	return {
 		pcbUuid,
 		boardName,
+		parentBoardName,
+		readbackVerified,
 	};
 }
 
@@ -502,11 +509,54 @@ async function createBoard(params: Record<string, unknown>): Promise<Record<stri
 	const schematicUuid = getOptionalString(params.schematicUuid);
 	const pcbUuid = getOptionalString(params.pcbUuid);
 	const boardName = await eda.dmt_Board.createBoard(schematicUuid, pcbUuid);
+	const projectInventory = await getVerifiedProjectInventory();
+	const { actualSchematicUuid, actualPcbUuid, readbackVerified } = verifyCreatedBoard(
+		projectInventory.boards,
+		boardName,
+		schematicUuid,
+		pcbUuid,
+	);
 
 	return {
 		boardName,
 		schematicUuid,
 		pcbUuid,
+		actualSchematicUuid,
+		actualPcbUuid,
+		readbackVerified,
+	};
+}
+
+async function importSchematicToPcb(params: Record<string, unknown>): Promise<Record<string, unknown>> {
+	const pcbUuid = getRequiredString(params.pcbUuid, 'pcbUuid');
+	const saveAfter = getOptionalBoolean(params.saveAfter);
+	const allowEmptyResult = getOptionalBoolean(params.allowEmptyResult) === true;
+	await openPcbDocumentIfNeeded(pcbUuid);
+	const beforeSource = (await eda.sys_FileManager.getDocumentSource()) ?? '';
+	const imported = await eda.pcb_Document.importChanges(pcbUuid);
+	const saved = await savePcbDocumentIfRequested(pcbUuid, saveAfter);
+	const afterSource = (await eda.sys_FileManager.getDocumentSource()) ?? '';
+	const { beforeSummary, afterSummary, sourceChanged, readbackVerified } = getImportReadbackStatus(
+		beforeSource,
+		afterSource,
+		allowEmptyResult,
+	);
+
+	if (imported && !readbackVerified) {
+		throw new Error(
+			`EasyEDA reported schematic import success for PCB ${pcbUuid}, but readback stayed empty and unchanged. The host likely ignored pcb_Document.importChanges(${pcbUuid}).`,
+		);
+	}
+
+	return {
+		pcbUuid,
+		imported,
+		saved,
+		allowEmptyResult,
+		sourceChanged,
+		readbackVerified,
+		beforeSummary,
+		afterSummary,
 	};
 }
 
@@ -1662,6 +1712,7 @@ function getSupportedMethods(): BridgeMethod[] {
 		'save_active_document',
 		'create_board',
 		'create_pcb',
+		'import_schematic_to_pcb',
 		'create_panel',
 		'create_schematic',
 		'create_schematic_page',
@@ -1732,6 +1783,32 @@ async function requireCurrentDocument(): Promise<IDMT_EditorDocumentItem> {
 		throw new Error('No active EasyEDA document is focused');
 
 	return currentDocument;
+}
+
+async function openPcbDocumentIfNeeded(pcbUuid: string): Promise<void> {
+	const currentDocument = await eda.dmt_SelectControl.getCurrentDocumentInfo();
+	if (currentDocument?.uuid === pcbUuid && currentDocument.documentType === EDMT_EditorDocumentType.PCB)
+		return;
+
+	await eda.dmt_EditorControl.openDocument(pcbUuid);
+	await requireCurrentDocumentType(EDMT_EditorDocumentType.PCB, `PCB ${pcbUuid} must be open before schematic import readback`);
+}
+
+interface ProjectInventory {
+	boards: unknown[];
+	pcbs: unknown[];
+}
+
+async function getVerifiedProjectInventory(): Promise<ProjectInventory> {
+	const [boards, pcbs] = await Promise.all([
+		eda.dmt_Board.getAllBoardsInfo(),
+		eda.dmt_Pcb.getAllPcbsInfo(),
+	]);
+
+	return {
+		boards: Array.isArray(boards) ? boards : [],
+		pcbs: Array.isArray(pcbs) ? pcbs : [],
+	};
 }
 
 async function requireCurrentDocumentType(

@@ -32,6 +32,12 @@ export const createBoardInputSchema = z.object({
 	pcbUuid: z.string().min(1).optional(),
 });
 
+export const importSchematicToPcbInputSchema = z.object({
+	pcbUuid: z.string().min(1),
+	saveAfter: z.boolean().optional(),
+	allowEmptyResult: z.boolean().optional(),
+});
+
 export const createSchematicPageInputSchema = z.object({
 	schematicUuid: z.string().min(1),
 });
@@ -501,6 +507,7 @@ export const easyedaToolNames = [
 	'save_active_document',
 	'create_board',
 	'create_pcb',
+	'import_schematic_to_pcb',
 	'create_panel',
 	'create_schematic',
 	'create_schematic_page',
@@ -665,6 +672,15 @@ export function registerEasyedaTools(server: ToolRegistrar, bridgeSession: Easye
 			inputSchema: createDocumentInputSchema,
 		},
 		async args => makeToolResult(await bridgeSession.call('create_pcb', args)),
+	);
+
+	server.registerTool(
+		'import_schematic_to_pcb',
+		{
+			description: 'Import linked schematic changes into a target PCB and fail if EasyEDA reports success without mutating an empty PCB.',
+			inputSchema: importSchematicToPcbInputSchema,
+		},
+		async args => makeToolResult(await bridgeSession.call('import_schematic_to_pcb', args)),
 	);
 
 	server.registerTool(

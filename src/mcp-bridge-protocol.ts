@@ -18,6 +18,7 @@ export type BridgeMethod
 		| 'save_active_document'
 		| 'create_board'
 		| 'create_pcb'
+		| 'import_schematic_to_pcb'
 		| 'create_panel'
 		| 'create_schematic'
 		| 'create_schematic_page'
