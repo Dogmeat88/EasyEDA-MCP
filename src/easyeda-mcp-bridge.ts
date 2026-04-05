@@ -4,6 +4,7 @@ import { syncBridgeHeaderMenus } from './bridge-header-menus';
 import { getSchematicNetLabelCapabilitySummary } from './bridge-runtime-capabilities';
 import { allocateBridgeSocketId, shouldHandleBridgeSocketCallback } from './bridge-socket-lifecycle';
 import { describeEditorBootstrapState, getOpenDocumentBootstrapFailure, getRuntimeLocationHash } from './editor-bootstrap-state';
+import { EXTENSION_VERSION } from './extension-metadata';
 import { withHostMethodTimeout } from './host-method-timeout';
 import {
 	computeSourceRevision,
@@ -179,6 +180,7 @@ export function showBridgeStatus(): void {
 	bridgeState.endpoint = getBridgeEndpoint();
 	const state = getEasyedaMcpBridgeState();
 	const lines = [
+		`Version: ${EXTENSION_VERSION}`,
 		`Endpoint: ${state.endpoint}`,
 		`Socket id: ${state.socketId ?? 'none'}`,
 		`Started: ${String(state.started)}`,
@@ -384,7 +386,7 @@ async function dispatchMethod(method: BridgeMethod, params: Record<string, unkno
 
 async function getHelloPayload(): Promise<Record<string, unknown>> {
 	return {
-		extensionVersion: '1.0.0',
+		extensionVersion: EXTENSION_VERSION,
 		endpoint: bridgeState.endpoint,
 		methods: getSupportedMethods(),
 	};

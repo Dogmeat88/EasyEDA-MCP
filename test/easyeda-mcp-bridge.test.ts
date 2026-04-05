@@ -5,6 +5,7 @@ import { shouldSyncBridgeHeaderMenus, syncBridgeHeaderMenus } from '../src/bridg
 import { getSchematicNetLabelCapabilitySummary } from '../src/bridge-runtime-capabilities';
 import { allocateBridgeSocketId, shouldHandleBridgeSocketCallback } from '../src/bridge-socket-lifecycle';
 import { describeEditorBootstrapState, getOpenDocumentBootstrapFailure, getRuntimeLocationHash } from '../src/editor-bootstrap-state';
+import { EXTENSION_VERSION } from '../src/extension-metadata';
 import { withHostMethodTimeout } from '../src/host-method-timeout';
 import { computeSourceRevision } from '../src/mcp-bridge-protocol';
 import { getOptionalTrimmedStringIncludingEmpty, resolvePcbLineNetForCreate } from '../src/pcb-line-net';
@@ -47,6 +48,11 @@ test('getRuntimeLocationHash tolerates undefined runtime location objects', () =
 	assert.equal(getRuntimeLocationHash({ hash: 123 }), '');
 	assert.equal(getRuntimeLocationHash(undefined), '');
 	assert.equal(getRuntimeLocationHash(null), '');
+});
+
+test('extension version is sourced from extension.json', async () => {
+	const extensionManifest = await import('../extension.json');
+	assert.equal(EXTENSION_VERSION, extensionManifest.default.version);
 });
 
 test('buildSchematicPinStubLine follows pin rotation when no explicit offset is provided', () => {

@@ -16,6 +16,7 @@ import {
 	showBridgeStatus,
 	startEasyedaMcpBridge,
 } from './easyeda-mcp-bridge';
+import { EXTENSION_DISPLAY_NAME, EXTENSION_VERSION } from './extension-metadata';
 
 export function activate(status?: 'onStartupFinished', arg?: string): void {
 	void status;
@@ -38,10 +39,11 @@ export function bridgeAbout(): void {
 	const state = getEasyedaMcpBridgeState();
 	eda.sys_Dialog.showInformationMessage(
 		[
-			'EasyEDA MCP Bridge extension',
+			`${EXTENSION_DISPLAY_NAME} extension`,
+			`Version: ${EXTENSION_VERSION}`,
 			`Endpoint: ${state.endpoint}`,
 			'Use npm run mcp:server to start the MCP server on your machine.',
 		].join('\n'),
-		'EasyEDA MCP Bridge',
+		EXTENSION_DISPLAY_NAME,
 	);
 }
