@@ -80,7 +80,10 @@ export class EasyedaBridgeSession {
 			pendingRequest.reject(new Error(envelope.error?.message ?? 'Unknown EasyEDA bridge error'));
 	}
 
-	handleSocketClosed(): void {
+	handleSocketClosed(socket?: BridgeSocketLike): void {
+		if (socket && this.socket && socket !== this.socket)
+			return;
+
 		this.socket = undefined;
 		for (const [requestId, pendingRequest] of this.pendingRequests) {
 			clearTimeout(pendingRequest.timeout);

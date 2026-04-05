@@ -1,4 +1,5 @@
 import type { IncomingMessage } from 'node:http';
+import type { BridgeMethod } from './mcp-bridge-protocol';
 import { Buffer } from 'node:buffer';
 import { execFile } from 'node:child_process';
 import { readFile, rm, writeFile } from 'node:fs/promises';
@@ -14,7 +15,6 @@ import { WebSocketServer } from 'ws';
 
 import { EasyedaBridgeSession } from './bridge-session';
 import { DEFAULT_BRIDGE_PATH, DEFAULT_BRIDGE_PORT } from './mcp-bridge-protocol';
-import type { BridgeMethod } from './mcp-bridge-protocol';
 import { registerEasyedaTools } from './mcp-tools';
 
 const bridgeHost = process.env.EASYEDA_MCP_BRIDGE_HOST ?? '127.0.0.1';
@@ -127,11 +127,11 @@ async function createWsServer(): Promise<WebSocketServer> {
 		});
 
 		socket.on('close', () => {
-			bridgeSession.handleSocketClosed();
+			bridgeSession.handleSocketClosed(socket);
 		});
 
 		socket.on('error', () => {
-			bridgeSession.handleSocketClosed();
+			bridgeSession.handleSocketClosed(socket);
 		});
 	});
 

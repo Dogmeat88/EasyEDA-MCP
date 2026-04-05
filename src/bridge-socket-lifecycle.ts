@@ -1,4 +1,9 @@
-export function allocateBridgeSocketId(baseSocketId: string, currentSequence: number): { socketId: string, nextSequence: number } {
+export interface BridgeSocketIdAllocation {
+	socketId: string;
+	nextSequence: number;
+}
+
+export function allocateBridgeSocketId(baseSocketId: string, currentSequence: number): BridgeSocketIdAllocation {
 	const nextSequence = currentSequence + 1;
 	return {
 		socketId: nextSequence === 1 ? baseSocketId : `${baseSocketId}-${nextSequence}`,

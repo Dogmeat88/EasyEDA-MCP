@@ -6,6 +6,10 @@ export interface EditorBootstrapStateInput {
 	suspectedBootstrapFailure?: boolean;
 }
 
+export function getRuntimeLocationHash(locationLike: { hash?: unknown } | undefined | null): string {
+	return typeof locationLike?.hash === 'string' ? locationLike.hash : '';
+}
+
 export function describeEditorBootstrapState(
 	currentDocument: { uuid?: string } | undefined,
 	splitScreenTree: { tabs?: Array<{ tabId?: string }> } | undefined,

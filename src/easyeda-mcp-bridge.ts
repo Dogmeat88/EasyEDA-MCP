@@ -1,9 +1,9 @@
 import type { BridgeMethod, BridgeRequestEnvelope } from './mcp-bridge-protocol';
 
-import { allocateBridgeSocketId, shouldHandleBridgeSocketCallback } from './bridge-socket-lifecycle';
 import { syncBridgeHeaderMenus } from './bridge-header-menus';
 import { getSchematicNetLabelCapabilitySummary } from './bridge-runtime-capabilities';
-import { describeEditorBootstrapState, getOpenDocumentBootstrapFailure } from './editor-bootstrap-state';
+import { allocateBridgeSocketId, shouldHandleBridgeSocketCallback } from './bridge-socket-lifecycle';
+import { describeEditorBootstrapState, getOpenDocumentBootstrapFailure, getRuntimeLocationHash } from './editor-bootstrap-state';
 import { withHostMethodTimeout } from './host-method-timeout';
 import {
 	computeSourceRevision,
@@ -436,7 +436,7 @@ async function getCurrentContext(): Promise<Record<string, unknown>> {
 		eda.dmt_Project.getCurrentProjectInfo(),
 	]);
 	const splitScreenTree = await eda.dmt_EditorControl.getSplitScreenTree();
-	const editorBootstrapState = describeEditorBootstrapState(currentDocument, splitScreenTree, location.hash);
+	const editorBootstrapState = describeEditorBootstrapState(currentDocument, splitScreenTree, getRuntimeLocationHash(location));
 
 	return {
 		currentDocument,

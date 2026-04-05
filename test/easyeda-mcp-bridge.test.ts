@@ -1,12 +1,12 @@
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
 
-import { allocateBridgeSocketId, shouldHandleBridgeSocketCallback } from '../src/bridge-socket-lifecycle';
-import { computeSourceRevision } from '../src/mcp-bridge-protocol';
 import { shouldSyncBridgeHeaderMenus, syncBridgeHeaderMenus } from '../src/bridge-header-menus';
 import { getSchematicNetLabelCapabilitySummary } from '../src/bridge-runtime-capabilities';
-import { describeEditorBootstrapState, getOpenDocumentBootstrapFailure } from '../src/editor-bootstrap-state';
+import { allocateBridgeSocketId, shouldHandleBridgeSocketCallback } from '../src/bridge-socket-lifecycle';
+import { describeEditorBootstrapState, getOpenDocumentBootstrapFailure, getRuntimeLocationHash } from '../src/editor-bootstrap-state';
 import { withHostMethodTimeout } from '../src/host-method-timeout';
+import { computeSourceRevision } from '../src/mcp-bridge-protocol';
 import { getOptionalTrimmedStringIncludingEmpty, resolvePcbLineNetForCreate } from '../src/pcb-line-net';
 import { findAddedPrimitiveIds } from '../src/primitive-id-diff';
 import { getImportReadbackStatus, verifyCreatedBoard, verifyCreatedPcb } from '../src/project-readback-guards';
@@ -40,6 +40,13 @@ test('shouldHandleBridgeSocketCallback filters stale websocket callbacks', () =>
 	assert.equal(shouldHandleBridgeSocketCallback('easyeda-mcp-bridge-3', 'easyeda-mcp-bridge-3'), true);
 	assert.equal(shouldHandleBridgeSocketCallback('easyeda-mcp-bridge-3', 'easyeda-mcp-bridge-2'), false);
 	assert.equal(shouldHandleBridgeSocketCallback(undefined, 'easyeda-mcp-bridge'), false);
+});
+
+test('getRuntimeLocationHash tolerates undefined runtime location objects', () => {
+	assert.equal(getRuntimeLocationHash({ hash: '#id=project-1' }), '#id=project-1');
+	assert.equal(getRuntimeLocationHash({ hash: 123 }), '');
+	assert.equal(getRuntimeLocationHash(undefined), '');
+	assert.equal(getRuntimeLocationHash(null), '');
 });
 
 test('buildSchematicPinStubLine follows pin rotation when no explicit offset is provided', () => {

@@ -1,8 +1,8 @@
+import type { BridgeMethod } from '../src/mcp-bridge-protocol';
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
 
 import { EasyedaBridgeSession } from '../src/bridge-session';
-import type { BridgeMethod } from '../src/mcp-bridge-protocol';
 import { parseBridgeEnvelope, serializeBridgeEnvelope } from '../src/mcp-bridge-protocol';
 
 class FakeSocket {
@@ -184,4 +184,30 @@ test('pending calls reject when the socket closes', async () => {
 		/EasyEDA bridge disconnected while waiting for/,
 	);
 	assert.equal(session.getConnectionState().pendingRequestCount, 0);
+});
+
+test('stale socket closes do not disconnect a newer active bridge socket', async () => {
+	const session = createSession(100);
+	const firstSocket = new FakeSocket();
+	const secondSocket = new FakeSocket();
+	session.setSocket(firstSocket);
+	session.setSocket(secondSocket);
+
+	session.handleSocketClosed(firstSocket);
+
+	assert.equal(session.getConnectionState().connected, true);
+	const pendingCall = session.call('get_current_context');
+	await flushQueuedDispatch();
+	const request = parseBridgeEnvelope(secondSocket.sent[1]);
+	assert.equal(request?.type, 'request');
+
+	session.handleRawMessage(serializeBridgeEnvelope({
+		protocolVersion: 1,
+		type: 'response',
+		requestId: request!.requestId!,
+		ok: true,
+		result: { ok: true },
+	}));
+
+	assert.deepEqual(await pendingCall, { ok: true });
 });
