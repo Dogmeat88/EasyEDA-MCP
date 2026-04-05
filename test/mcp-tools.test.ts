@@ -77,6 +77,45 @@ test('registerEasyedaTools registers the full MCP surface including component, q
 	assert.ok(registeredTools.some(tool => tool.name === 'delete_pcb_text'));
 });
 
+test('get_current_context surfaces start-page bootstrap diagnostics when EasyEDA is stuck on tab_page1', async () => {
+	const registeredTools = createRegisteredTools({
+		async call(method) {
+			if (method === 'get_current_context') {
+				return {
+					currentDocument: {
+						documentType: -1,
+						uuid: 'tab_page1',
+					},
+					editorBootstrapState: {
+						startPageOnly: true,
+						urlHash: '#id=project-1,tab=*pcb-1@project-1',
+						requestedProjectUuid: 'project-1',
+						requestedTabIds: ['*pcb-1@project-1'],
+						suspectedBootstrapFailure: true,
+						warning: 'EasyEDA is still showing only Start Page even though the URL targets a project or document. Project bootstrap likely failed in this session.',
+					},
+				};
+			}
+
+			return { method };
+		},
+		getConnectionState() {
+			return { connected: true };
+		},
+	});
+	const currentContextTool = registeredTools.find(tool => tool.name === 'get_current_context');
+
+	assert.ok(currentContextTool);
+
+	const result = await currentContextTool.handler({}) as { structuredContent: Record<string, unknown> };
+	const recommendedNextSteps = result.structuredContent.recommendedNextSteps as string[];
+
+	assert.equal(result.structuredContent.contextLevel, 'document-only');
+	assert.equal((result.structuredContent.editorBootstrapState as { suspectedBootstrapFailure: boolean }).suspectedBootstrapFailure, true);
+	assert.equal(recommendedNextSteps[0], 'EasyEDA is still on Start Page while the URL targets a project or document. Project bootstrap likely failed in this session.');
+	assert.match(recommendedNextSteps[2], /Get an illegal project!|Project does not exist/);
+});
+
 test('searchLibraryDevicesInputSchema requires a query or lcscIds', () => {
 	assert.throws(
 		() => searchLibraryDevicesInputSchema.parse({}),
