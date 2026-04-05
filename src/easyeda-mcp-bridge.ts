@@ -17,6 +17,7 @@ import {
 	parseBridgeEnvelope,
 	serializeBridgeEnvelope,
 } from './mcp-bridge-protocol';
+import { findResolvedPcbPad } from './pcb-pad-geometry';
 import { getOptionalTrimmedStringIncludingEmpty, resolvePcbLineNetForCreate } from './pcb-line-net';
 import { findAddedPrimitiveIds } from './primitive-id-diff';
 import { getImportReadbackStatus, verifyCreatedBoard, verifyCreatedPcb } from './project-readback-guards';
@@ -1076,12 +1077,12 @@ async function deletePcbComponent(params: Record<string, unknown>): Promise<Reco
 async function listPcbComponentPads(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	await requireCurrentDocumentType(EDMT_EditorDocumentType.PCB, 'PCB document required for component pad queries');
 	const componentPrimitiveId = getRequiredString(params.componentPrimitiveId, 'componentPrimitiveId');
-	const pads = await eda.pcb_PrimitiveComponent.getAllPinsByPrimitiveId(componentPrimitiveId) ?? [];
+	const pads = await listResolvedPcbPads(componentPrimitiveId);
 
 	return {
 		componentPrimitiveId,
 		count: pads.length,
-		pads: pads.map(pad => serializePcbPad(pad)),
+		pads: pads.map(pad => serializePcbPad(pad, componentPrimitiveId)),
 	};
 }
 
@@ -2133,12 +2134,35 @@ async function requireSchematicPin(componentPrimitiveId: string, pinNumber: stri
 }
 
 async function requirePcbPad(componentPrimitiveId: string, padNumber: string): Promise<IPCB_PrimitiveComponentPad> {
-	const pads = await eda.pcb_PrimitiveComponent.getAllPinsByPrimitiveId(componentPrimitiveId) ?? [];
+	const pads = await listResolvedPcbPads(componentPrimitiveId);
 	const pad = pads.find(candidate => candidate.getState_PadNumber() === padNumber);
 	if (!pad)
 		throw new Error(`Unable to find PCB pad ${padNumber} on component ${componentPrimitiveId}`);
 
 	return pad;
+}
+
+async function listResolvedPcbPads(componentPrimitiveId: string): Promise<IPCB_PrimitiveComponentPad[]> {
+	const component = await eda.pcb_PrimitiveComponent.get(componentPrimitiveId) as { pads?: unknown } | undefined;
+	const allPads = await eda.pcb_PrimitivePad.getAll() as IPCB_PrimitiveComponentPad[] | undefined;
+	if (Array.isArray(allPads) && allPads.length > 0) {
+		const componentPadRefs = Array.isArray(component?.pads) ? component.pads : [];
+		const resolvedPads = componentPadRefs
+			.map((padReference) => {
+				const reference = padReference as { padNumber?: unknown } | undefined;
+				const padNumber = typeof reference?.padNumber === 'string' ? reference.padNumber : undefined;
+				if (!padNumber)
+					return undefined;
+
+				return findResolvedPcbPad(componentPrimitiveId, padNumber, component, allPads);
+			})
+			.filter((pad): pad is IPCB_PrimitiveComponentPad => Boolean(pad));
+
+		if (resolvedPads.length > 0)
+			return resolvedPads;
+	}
+
+	return await eda.pcb_PrimitiveComponent.getAllPinsByPrimitiveId(componentPrimitiveId) ?? [];
 }
 
 async function listRecoverablePcbComponentPrimitiveIds(
@@ -2290,10 +2314,14 @@ function getRecordValue(pin: ISCH_PrimitiveComponentPin, key: string): unknown {
 	return candidate[key];
 }
 
-function serializePcbPad(pad: IPCB_PrimitiveComponentPad): Record<string, unknown> {
+function serializePcbPad(pad: IPCB_PrimitiveComponentPad, parentComponentPrimitiveId?: string): Record<string, unknown> {
+	const parentComponentId = typeof (pad as IPCB_PrimitiveComponentPad & { getState_ParentComponentPrimitiveId?: () => unknown }).getState_ParentComponentPrimitiveId === 'function'
+		? (pad as IPCB_PrimitiveComponentPad & { getState_ParentComponentPrimitiveId: () => unknown }).getState_ParentComponentPrimitiveId()
+		: undefined;
+
 	return {
 		primitiveId: pad.getState_PrimitiveId(),
-		parentComponentPrimitiveId: pad.getState_ParentComponentPrimitiveId(),
+		parentComponentPrimitiveId: typeof parentComponentId === 'string' ? parentComponentId : parentComponentPrimitiveId,
 		layer: pad.getState_Layer(),
 		padNumber: pad.getState_PadNumber(),
 		x: pad.getState_X(),
