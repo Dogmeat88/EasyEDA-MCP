@@ -1,6 +1,7 @@
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
 
+import { allocateBridgeSocketId, shouldHandleBridgeSocketCallback } from '../src/bridge-socket-lifecycle';
 import { computeSourceRevision } from '../src/mcp-bridge-protocol';
 import { shouldSyncBridgeHeaderMenus, syncBridgeHeaderMenus } from '../src/bridge-header-menus';
 import { getSchematicNetLabelCapabilitySummary } from '../src/bridge-runtime-capabilities';
@@ -19,6 +20,27 @@ function createPin(x: number, y: number, rotation: number, pinLength = 10) {
 		getState_PinLength: () => pinLength,
 	};
 }
+
+test('allocateBridgeSocketId rotates socket ids across reconnect attempts', () => {
+	assert.deepEqual(allocateBridgeSocketId('easyeda-mcp-bridge', 0), {
+		socketId: 'easyeda-mcp-bridge',
+		nextSequence: 1,
+	});
+	assert.deepEqual(allocateBridgeSocketId('easyeda-mcp-bridge', 1), {
+		socketId: 'easyeda-mcp-bridge-2',
+		nextSequence: 2,
+	});
+	assert.deepEqual(allocateBridgeSocketId('easyeda-mcp-bridge', 2), {
+		socketId: 'easyeda-mcp-bridge-3',
+		nextSequence: 3,
+	});
+});
+
+test('shouldHandleBridgeSocketCallback filters stale websocket callbacks', () => {
+	assert.equal(shouldHandleBridgeSocketCallback('easyeda-mcp-bridge-3', 'easyeda-mcp-bridge-3'), true);
+	assert.equal(shouldHandleBridgeSocketCallback('easyeda-mcp-bridge-3', 'easyeda-mcp-bridge-2'), false);
+	assert.equal(shouldHandleBridgeSocketCallback(undefined, 'easyeda-mcp-bridge'), false);
+});
 
 test('buildSchematicPinStubLine follows pin rotation when no explicit offset is provided', () => {
 	assert.deepEqual(buildSchematicPinStubLine(createPin(100, 200, 0)), [100, 200, 120, 200]);

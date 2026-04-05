@@ -1,5 +1,6 @@
 import type { BridgeMethod, BridgeRequestEnvelope } from './mcp-bridge-protocol';
 
+import { allocateBridgeSocketId, shouldHandleBridgeSocketCallback } from './bridge-socket-lifecycle';
 import { syncBridgeHeaderMenus } from './bridge-header-menus';
 import { getSchematicNetLabelCapabilitySummary } from './bridge-runtime-capabilities';
 import { describeEditorBootstrapState, getOpenDocumentBootstrapFailure } from './editor-bootstrap-state';
@@ -25,6 +26,7 @@ interface BridgeState {
 	started: boolean;
 	connected: boolean;
 	connectAttempts: number;
+	socketId?: string;
 	lastAttemptAt?: number;
 	lastConnectedAt?: number;
 	lastError?: string;
@@ -42,6 +44,8 @@ const bridgeState: BridgeState = {
 };
 
 let pendingConnectionDiagnosticTimer: NodeJS.Timeout | undefined;
+let bridgeRuntimeStarted = false;
+let bridgeSocketSequence = 0;
 
 const PCB_TEXT_HOST_TIMEOUT_MS = 4_000;
 const PCB_TEXT_HOST_TIMEOUT_HINT = 'This EasyEDA host session is not responding to pcb_PrimitiveString APIs. PCB text tools are unavailable in this session. Try reopening the PCB document or restarting the EasyEDA extension host.';
@@ -50,22 +54,38 @@ export async function startEasyedaMcpBridge(forceReconnect = false): Promise<voi
 	hydratePersistedBridgeState();
 	bridgeState.endpoint = getBridgeEndpoint();
 	await ensureBridgeHeaderMenus();
-	if (bridgeState.started && !forceReconnect)
+	if (bridgeRuntimeStarted && !forceReconnect)
 		return;
 
+	const previousSocketId = bridgeState.socketId;
+	let nextSocket = allocateBridgeSocketId(MCP_BRIDGE_SOCKET_ID, bridgeSocketSequence);
+	bridgeSocketSequence = nextSocket.nextSequence;
+	if (previousSocketId && nextSocket.socketId === previousSocketId) {
+		nextSocket = allocateBridgeSocketId(MCP_BRIDGE_SOCKET_ID, bridgeSocketSequence);
+		bridgeSocketSequence = nextSocket.nextSequence;
+	}
+
+	const socketId = nextSocket.socketId;
+
+	bridgeRuntimeStarted = true;
 	bridgeState.started = true;
 	bridgeState.connected = false;
 	bridgeState.connectAttempts += 1;
+	bridgeState.socketId = socketId;
 	bridgeState.lastAttemptAt = Date.now();
-	bridgeState.lastEvent = forceReconnect ? 'reconnecting websocket client' : 'registering websocket client';
+	bridgeState.lastEvent = forceReconnect
+		? `reconnecting websocket client with ${socketId}`
+		: `registering websocket client ${socketId}`;
 	bridgeState.lastError = undefined;
 	void persistBridgeState();
 	clearPendingConnectionDiagnosticTimer();
 
-	if (forceReconnect) {
+	if (previousSocketId) {
 		try {
-			eda.sys_WebSocket.close(MCP_BRIDGE_SOCKET_ID);
-			bridgeState.lastEvent = 'closed previous websocket before reconnect';
+			eda.sys_WebSocket.close(previousSocketId);
+			bridgeState.lastEvent = previousSocketId === socketId
+				? `closed stale websocket ${previousSocketId} before retrying with a new id`
+				: `closed previous websocket ${previousSocketId} before registering ${socketId}`;
 			void persistBridgeState();
 		}
 		catch {
@@ -75,9 +95,12 @@ export async function startEasyedaMcpBridge(forceReconnect = false): Promise<voi
 
 	try {
 		eda.sys_WebSocket.register(
-			MCP_BRIDGE_SOCKET_ID,
+			socketId,
 			bridgeState.endpoint,
 			async (event) => {
+				if (!shouldHandleBridgeSocketCallback(bridgeState.socketId, socketId))
+					return;
+
 				const rawMessage = typeof event.data === 'string' ? event.data : undefined;
 				if (!rawMessage)
 					return;
@@ -86,16 +109,19 @@ export async function startEasyedaMcpBridge(forceReconnect = false): Promise<voi
 				await handleSocketMessage(rawMessage);
 			},
 			async () => {
+				if (!shouldHandleBridgeSocketCallback(bridgeState.socketId, socketId))
+					return;
+
 				clearPendingConnectionDiagnosticTimer();
 				bridgeState.connected = true;
 				bridgeState.lastConnectedAt = Date.now();
 				bridgeState.lastEvent = 'websocket connected';
 				bridgeState.lastError = undefined;
 				void persistBridgeState();
-				sendSocketMessage(createExtensionHello(await getHelloPayload()));
+				sendSocketMessage(createExtensionHello(await getHelloPayload()), socketId);
 			},
 		);
-		scheduleConnectionDiagnostic();
+		scheduleConnectionDiagnostic(socketId);
 	}
 	catch (error: unknown) {
 		bridgeState.connected = false;
@@ -154,6 +180,7 @@ export function showBridgeStatus(): void {
 	const state = getEasyedaMcpBridgeState();
 	const lines = [
 		`Endpoint: ${state.endpoint}`,
+		`Socket id: ${state.socketId ?? 'none'}`,
 		`Started: ${String(state.started)}`,
 		`Connected: ${String(state.connected)}`,
 		`Connect attempts: ${String(state.connectAttempts)}`,
@@ -1885,12 +1912,11 @@ function hydratePersistedBridgeState(): void {
 	const persistedState = storedValue as Partial<BridgeState>;
 	if (typeof persistedState.endpoint === 'string' && persistedState.endpoint.trim())
 		bridgeState.endpoint = persistedState.endpoint;
-	if (typeof persistedState.started === 'boolean')
-		bridgeState.started = persistedState.started;
-	if (typeof persistedState.connected === 'boolean')
-		bridgeState.connected = persistedState.connected;
 	if (typeof persistedState.connectAttempts === 'number' && Number.isFinite(persistedState.connectAttempts))
 		bridgeState.connectAttempts = persistedState.connectAttempts;
+	bridgeState.socketId = typeof persistedState.socketId === 'string' && persistedState.socketId.trim()
+		? persistedState.socketId
+		: bridgeState.socketId;
 	bridgeState.lastAttemptAt = typeof persistedState.lastAttemptAt === 'number' ? persistedState.lastAttemptAt : bridgeState.lastAttemptAt;
 	bridgeState.lastConnectedAt = typeof persistedState.lastConnectedAt === 'number' ? persistedState.lastConnectedAt : bridgeState.lastConnectedAt;
 	bridgeState.lastError = typeof persistedState.lastError === 'string' ? persistedState.lastError : undefined;
@@ -1907,9 +1933,15 @@ async function persistBridgeState(): Promise<void> {
 	}
 }
 
-function sendSocketMessage(message: ReturnType<typeof createBridgeResponse> | ReturnType<typeof createBridgeError> | ReturnType<typeof createExtensionHello>): void {
+function sendSocketMessage(
+	message: ReturnType<typeof createBridgeResponse> | ReturnType<typeof createBridgeError> | ReturnType<typeof createExtensionHello>,
+	socketId = bridgeState.socketId ?? MCP_BRIDGE_SOCKET_ID,
+): void {
+	if (!shouldHandleBridgeSocketCallback(bridgeState.socketId, socketId))
+		return;
+
 	try {
-		eda.sys_WebSocket.send(MCP_BRIDGE_SOCKET_ID, serializeBridgeEnvelope(message));
+		eda.sys_WebSocket.send(socketId, serializeBridgeEnvelope(message));
 		bridgeState.lastEvent = 'sent websocket message';
 		void persistBridgeState();
 	}
@@ -1922,9 +1954,12 @@ function sendSocketMessage(message: ReturnType<typeof createBridgeResponse> | Re
 	}
 }
 
-function scheduleConnectionDiagnostic(): void {
+function scheduleConnectionDiagnostic(socketId: string): void {
 	clearPendingConnectionDiagnosticTimer();
 	pendingConnectionDiagnosticTimer = setTimeout(() => {
+		if (!shouldHandleBridgeSocketCallback(bridgeState.socketId, socketId))
+			return;
+
 		if (bridgeState.connected)
 			return;
 
