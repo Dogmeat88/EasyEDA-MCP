@@ -5,6 +5,16 @@ import JSZip from 'jszip';
 
 import * as extensionConfig from '../extension.json';
 
+function getPackageFileBaseName(): string {
+	const preferredName = extensionConfig.displayName?.trim() || extensionConfig.name;
+	return Array.from(preferredName, (character) => {
+		if ('<>:"/\\|?*'.includes(character))
+			return '-';
+		const codePoint = character.codePointAt(0) ?? 0;
+		return codePoint < 32 ? '-' : character;
+	}).join('');
+}
+
 /**
  * 将多行字符串拆分成字符串数组
  *
@@ -88,7 +98,7 @@ function main() {
 	}
 
 	zip.generateNodeStream({ type: 'nodebuffer', streamFiles: true, compression: 'DEFLATE', compressionOptions: { level: 9 } }).pipe(
-		fs.createWriteStream(path.join(__dirname, 'dist', `${extensionConfig.name}_v${extensionConfig.version}.eext`)),
+		fs.createWriteStream(path.join(__dirname, 'dist', `${getPackageFileBaseName()}_v${extensionConfig.version}.eext`)),
 	);
 }
 

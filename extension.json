@@ -3,7 +3,7 @@
 	"uuid": "4d178577408e469596af3d0b5df241f0",
 	"displayName": "EasyEDA MCP Bridge",
 	"description": "EasyEDA Pro MCP bridge extension for local agent and automation workflows",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"publisher": "",
 	"engines": {
 		"eda": "^3.0.0"
