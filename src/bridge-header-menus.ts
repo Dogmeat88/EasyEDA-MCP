@@ -15,6 +15,12 @@ export interface BridgeHeaderMenuApi {
 	insertHeaderMenus?: (menus: BridgeHeaderMenuDefinition[]) => Promise<unknown> | unknown;
 }
 
+export interface BridgeHeaderMenuDocumentLike {
+	body?: {
+		textContent?: string;
+	};
+}
+
 const BRIDGE_HEADER_MENUS: BridgeHeaderMenuDefinition[] = [
 	{
 		id: 'EasyEDA MCP Bridge',
@@ -41,8 +47,19 @@ export function cloneBridgeHeaderMenus(): BridgeHeaderMenuDefinition[] {
 	}));
 }
 
+export function shouldSyncBridgeHeaderMenus(currentDocument?: BridgeHeaderMenuDocumentLike | null): boolean {
+	const bodyText = currentDocument?.body?.textContent;
+	if (typeof bodyText === 'string' && bodyText.includes('EasyEDA MCP Bridge'))
+		return false;
+
+	return true;
+}
+
 export async function syncBridgeHeaderMenus(headerMenuApi: BridgeHeaderMenuApi | null | undefined): Promise<boolean> {
 	if (typeof headerMenuApi?.replaceHeaderMenus !== 'function' && typeof headerMenuApi?.insertHeaderMenus !== 'function')
+		return false;
+
+	if (!shouldSyncBridgeHeaderMenus(globalThis.document))
 		return false;
 
 	const menus = cloneBridgeHeaderMenus();

@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
 
-import { syncBridgeHeaderMenus } from '../src/bridge-header-menus';
+import { shouldSyncBridgeHeaderMenus, syncBridgeHeaderMenus } from '../src/bridge-header-menus';
 import { getSchematicNetLabelCapabilitySummary } from '../src/bridge-runtime-capabilities';
 import { withHostMethodTimeout } from '../src/host-method-timeout';
 import { getOptionalTrimmedStringIncludingEmpty, resolvePcbLineNetForCreate } from '../src/pcb-line-net';
@@ -25,8 +25,8 @@ test('buildSchematicPinStubLine follows pin rotation when no explicit offset is 
 });
 
 test('buildSchematicPinStubLine honors explicit offsets as direct relative endpoints', () => {
-	assert.deepEqual(buildSchematicPinStubLine(createPin(50, 75, 0), 30, -15), [50, 75, 80, 60]);
 	assert.deepEqual(buildSchematicPinStubLine(createPin(50, 75, 180), undefined, 10), [50, 75, 50, 85]);
+	assert.deepEqual(buildSchematicPinStubLine(createPin(50, 75, 0), 30, -15), [50, 75, 80, 60]);
 });
 
 test('findAddedPrimitiveIds returns only newly created primitive ids in order', () => {
@@ -90,7 +90,6 @@ test('syncBridgeHeaderMenus reasserts the bridge header menu definition', async 
 			replaceHeaderMenusCalls.push(menus);
 		},
 	});
-
 	assert.equal(replaceHeaderMenusCalls.length, 1);
 	assert.deepEqual(replaceHeaderMenusCalls[0], [
 		{
@@ -110,6 +109,12 @@ test('syncBridgeHeaderMenus reasserts the bridge header menu definition', async 
 			],
 		},
 	]);
+});
+
+test('shouldSyncBridgeHeaderMenus skips runtime replacement when the bridge menu is already visible', () => {
+	assert.equal(shouldSyncBridgeHeaderMenus({ body: { textContent: 'File\nSettings\nEasyEDA MCP Bridge\nHelp' } }), false);
+	assert.equal(shouldSyncBridgeHeaderMenus({ body: { textContent: 'File\nSettings\nHelp' } }), true);
+	assert.equal(shouldSyncBridgeHeaderMenus(undefined), true);
 });
 
 test('withHostMethodTimeout resolves when the host call completes in time', async () => {
