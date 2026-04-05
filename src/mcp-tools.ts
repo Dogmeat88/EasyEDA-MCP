@@ -1685,6 +1685,7 @@ function enrichCurrentContext(value: unknown): Record<string, unknown> {
 	const context = normalizeStructuredContent(value);
 	const currentProject = asRecord(context.currentProject);
 	const currentDocument = asRecord(context.currentDocument);
+	const editorBootstrapState = asRecord(context.editorBootstrapState);
 	const hasProjectContext = Boolean(currentProject);
 	const hasDocumentContext = Boolean(currentDocument);
 	let contextLevel = 'none';
@@ -1696,7 +1697,14 @@ function enrichCurrentContext(value: unknown): Record<string, unknown> {
 		contextLevel = 'document-only';
 
 	let recommendedNextSteps: string[];
-	if (hasDocumentContext) {
+	if (editorBootstrapState?.suspectedBootstrapFailure === true) {
+		recommendedNextSteps = [
+			'EasyEDA is still on Start Page while the URL targets a project or document. Project bootstrap likely failed in this session.',
+			'Reopen the target project through the EasyEDA UI or reload the editor shell, then call get_current_context again.',
+			'If open_document still times out, inspect the EasyEDA UI console for errors such as Get an illegal project! or Project does not exist.',
+		];
+	}
+	else if (hasDocumentContext) {
 		recommendedNextSteps = [
 			'Use document-specific tools that match the active document type.',
 			'If you need project inventory or cross-document operations, call list_project_objects next.',

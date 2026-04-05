@@ -2,6 +2,7 @@ import type { BridgeMethod, BridgeRequestEnvelope } from './mcp-bridge-protocol'
 
 import { syncBridgeHeaderMenus } from './bridge-header-menus';
 import { getSchematicNetLabelCapabilitySummary } from './bridge-runtime-capabilities';
+import { describeEditorBootstrapState, getOpenDocumentBootstrapFailure } from './editor-bootstrap-state';
 import { withHostMethodTimeout } from './host-method-timeout';
 import {
 	computeSourceRevision,
@@ -407,10 +408,14 @@ async function getCurrentContext(): Promise<Record<string, unknown>> {
 		eda.dmt_SelectControl.getCurrentDocumentInfo(),
 		eda.dmt_Project.getCurrentProjectInfo(),
 	]);
+	const splitScreenTree = await eda.dmt_EditorControl.getSplitScreenTree();
+	const editorBootstrapState = describeEditorBootstrapState(currentDocument, splitScreenTree, location.hash);
 
 	return {
 		currentDocument,
 		currentProject,
+		splitScreenTree,
+		editorBootstrapState,
 	};
 }
 
@@ -459,6 +464,10 @@ async function listProjectObjects(): Promise<Record<string, unknown>> {
 async function openDocument(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	const documentUuid = getRequiredString(params.documentUuid, 'documentUuid');
 	const splitScreenId = getOptionalString(params.splitScreenId);
+	const currentContext = await getCurrentContext();
+	const bootstrapFailureMessage = getOpenDocumentBootstrapFailure(currentContext, documentUuid);
+	if (bootstrapFailureMessage)
+		throw new Error(bootstrapFailureMessage);
 	const tabId = await eda.dmt_EditorControl.openDocument(documentUuid, splitScreenId);
 
 	return {

@@ -25,6 +25,7 @@ const mcpHttpEnabled = process.env.EASYEDA_MCP_HTTP_ENABLED !== '0';
 const mcpHttpHost = process.env.EASYEDA_MCP_HTTP_HOST ?? '127.0.0.1';
 const mcpHttpPort = Number(process.env.EASYEDA_MCP_HTTP_PORT ?? 19733);
 const mcpHttpPath = process.env.EASYEDA_MCP_HTTP_PATH ?? '/mcp';
+const stdioEnabled = process.env.EASYEDA_MCP_STDIO_ENABLED !== '0';
 const serverPidFile = process.env.EASYEDA_MCP_PID_FILE ?? join(tmpdir(), 'easyeda-mcp-server.pid');
 const execFileAsync = promisify(execFile);
 
@@ -62,7 +63,7 @@ const bridgeSession = new EasyedaBridgeSession({
 	serverName: 'easyeda-mcp-server',
 });
 
-const stdioServer = createMcpServer();
+const stdioServer = stdioEnabled ? createMcpServer() : undefined;
 
 if (require.main === module)
 	void start().catch(handleStartFailure);
@@ -73,8 +74,10 @@ async function start(): Promise<void> {
 	const httpServer = mcpHttpEnabled ? await startHttpServer() : undefined;
 	registerShutdownHandlers(wsServer, httpServer);
 	await writeCurrentServerPid();
-	const transport = new StdioServerTransport();
-	await stdioServer.connect(transport);
+	if (stdioServer) {
+		const transport = new StdioServerTransport();
+		await stdioServer.connect(transport);
+	}
 }
 
 function createMcpServer(): McpServer {
@@ -309,7 +312,7 @@ function registerShutdownHandlers(wsServer: WebSocketServer, httpServer?: Return
 		await Promise.allSettled([
 			closeWsServer(wsServer),
 			httpServer ? closeHttpServer(httpServer) : Promise.resolve(),
-			stdioServer.close(),
+			stdioServer ? stdioServer.close() : Promise.resolve(),
 			removeServerPidFile(),
 		]);
 		process.exit(0);

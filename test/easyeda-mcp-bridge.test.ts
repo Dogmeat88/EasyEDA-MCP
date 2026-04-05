@@ -4,6 +4,7 @@ import test from 'node:test';
 import { computeSourceRevision } from '../src/mcp-bridge-protocol';
 import { shouldSyncBridgeHeaderMenus, syncBridgeHeaderMenus } from '../src/bridge-header-menus';
 import { getSchematicNetLabelCapabilitySummary } from '../src/bridge-runtime-capabilities';
+import { describeEditorBootstrapState, getOpenDocumentBootstrapFailure } from '../src/editor-bootstrap-state';
 import { withHostMethodTimeout } from '../src/host-method-timeout';
 import { getOptionalTrimmedStringIncludingEmpty, resolvePcbLineNetForCreate } from '../src/pcb-line-net';
 import { findAddedPrimitiveIds } from '../src/primitive-id-diff';
@@ -198,4 +199,55 @@ test('getImportReadbackStatus succeeds when source readback gains imported compo
 		viaCount: 0,
 		totalParsedEntries: 3,
 	});
+});
+
+test('getOpenDocumentBootstrapFailure reports a fast-fail error for tab_page1 bootstrap shells', () => {
+	const message = getOpenDocumentBootstrapFailure({
+		currentDocument: {
+			documentType: -1,
+			uuid: 'tab_page1',
+		},
+		editorBootstrapState: {
+			startPageOnly: true,
+			requestedProjectUuid: 'project-1',
+			requestedTabIds: ['*pcb-1@project-1'],
+			suspectedBootstrapFailure: true,
+		},
+	}, 'pcb-1');
+
+	assert.match(message ?? '', /open_document cannot proceed because EasyEDA is still stuck on Start Page/);
+	assert.match(message ?? '', /project project-1/);
+	assert.match(message ?? '', /Requested document pcb-1/);
+	assert.match(message ?? '', /call get_current_context again before retrying open_document/);
+});
+
+test('getOpenDocumentBootstrapFailure stays silent for healthy editor contexts', () => {
+	assert.equal(getOpenDocumentBootstrapFailure({
+		currentDocument: {
+			documentType: 4,
+			uuid: 'pcb-1',
+		},
+		editorBootstrapState: {
+			startPageOnly: false,
+			suspectedBootstrapFailure: false,
+		},
+	}, 'pcb-1'), undefined);
+});
+
+test('describeEditorBootstrapState flags project-targeted start page shells as bootstrap failures', () => {
+	assert.deepEqual(
+		describeEditorBootstrapState(
+			{ uuid: 'tab_page1' },
+			{ tabs: [{ tabId: 'tab_page1' }] },
+			'#id=project-1,tab=*pcb-1@project-1|sch-1@project-1',
+		),
+		{
+			startPageOnly: true,
+			urlHash: '#id=project-1,tab=*pcb-1@project-1|sch-1@project-1',
+			requestedProjectUuid: 'project-1',
+			requestedTabIds: ['*pcb-1@project-1', 'sch-1@project-1'],
+			suspectedBootstrapFailure: true,
+			warning: 'EasyEDA is still showing only Start Page even though the URL targets a project or document. Project bootstrap likely failed in this session.',
+		},
+	);
 });
