@@ -54,6 +54,7 @@ test('registerEasyedaTools registers the full MCP surface including component, q
 	assert.ok(registeredTools.some(tool => tool.name === 'ping_bridge'));
 	assert.ok(registeredTools.some(tool => tool.name === 'echo_bridge'));
 	assert.ok(registeredTools.some(tool => tool.name === 'create_board'));
+	assert.ok(registeredTools.some(tool => tool.name === 'import_schematic_to_pcb'));
 	assert.ok(registeredTools.some(tool => tool.name === 'create_panel'));
 	assert.ok(registeredTools.some(tool => tool.name === 'create_schematic_page'));
 	assert.ok(registeredTools.some(tool => tool.name === 'copy_board'));
@@ -656,6 +657,7 @@ test('new component, pin, pad, query, and net tool handlers dispatch the expecte
 	const echoBridgeTool = registeredTools.find(tool => tool.name === 'echo_bridge');
 	const currentContextTool = registeredTools.find(tool => tool.name === 'get_current_context');
 	const createBoardTool = registeredTools.find(tool => tool.name === 'create_board');
+	const importSchematicToPcbTool = registeredTools.find(tool => tool.name === 'import_schematic_to_pcb');
 	const createPanelTool = registeredTools.find(tool => tool.name === 'create_panel');
 	const createSchematicPageTool = registeredTools.find(tool => tool.name === 'create_schematic_page');
 	const copyBoardTool = registeredTools.find(tool => tool.name === 'copy_board');
@@ -682,6 +684,7 @@ test('new component, pin, pad, query, and net tool handlers dispatch the expecte
 	assert.ok(echoBridgeTool);
 	assert.ok(currentContextTool);
 	assert.ok(createBoardTool);
+	assert.ok(importSchematicToPcbTool);
 	assert.ok(createPanelTool);
 	assert.ok(createSchematicPageTool);
 	assert.ok(copyBoardTool);
@@ -708,6 +711,7 @@ test('new component, pin, pad, query, and net tool handlers dispatch the expecte
 	const echoBridgeResult = await echoBridgeTool.handler({ message: 'hello bridge' }) as { structuredContent: { method: string } };
 	const currentContextResult = await currentContextTool.handler({}) as { structuredContent: Record<string, unknown> };
 	const createBoardResult = await createBoardTool.handler({ schematicUuid: 'sch-1', pcbUuid: 'pcb-1' }) as { structuredContent: { method: string } };
+	const importSchematicToPcbResult = await importSchematicToPcbTool.handler({ pcbUuid: 'pcb-1' }) as { structuredContent: { method: string } };
 	const createPanelResult = await createPanelTool.handler({}) as { structuredContent: { method: string } };
 	const createSchematicPageResult = await createSchematicPageTool.handler({ schematicUuid: 'sch-1' }) as { structuredContent: { method: string } };
 	const copyBoardResult = await copyBoardTool.handler({ sourceBoardName: 'Board 1' }) as { structuredContent: { method: string } };
@@ -767,6 +771,7 @@ test('new component, pin, pad, query, and net tool handlers dispatch the expecte
 	assert.equal(pingBridgeResult.structuredContent.method, 'ping_bridge');
 	assert.equal(echoBridgeResult.structuredContent.method, 'echo_bridge');
 	assert.equal(createBoardResult.structuredContent.method, 'create_board');
+	assert.equal(importSchematicToPcbResult.structuredContent.method, 'import_schematic_to_pcb');
 	assert.equal(createPanelResult.structuredContent.method, 'create_panel');
 	assert.equal(createSchematicPageResult.structuredContent.method, 'create_schematic_page');
 	assert.equal(copyBoardResult.structuredContent.method, 'copy_board');
