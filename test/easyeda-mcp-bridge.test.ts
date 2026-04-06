@@ -4,7 +4,11 @@ import test from 'node:test';
 import { shouldSyncBridgeHeaderMenus, syncBridgeHeaderMenus } from '../src/bridge-header-menus';
 import { getSchematicNetLabelCapabilitySummary } from '../src/bridge-runtime-capabilities';
 import { allocateBridgeSocketId, shouldHandleBridgeSocketCallback } from '../src/bridge-socket-lifecycle';
-import { buildEmptyPcbImportCompareMapFromSchematicNetlist, shouldAttemptBridgeWatchdogReconnect } from '../src/easyeda-mcp-bridge';
+import {
+	buildEmptyPcbImportCompareMapFromSchematicNetlist,
+	shouldAttemptBridgeWatchdogReconnect,
+	shouldUseHostUiImportFallback,
+} from '../src/easyeda-mcp-bridge';
 import { describeEditorBootstrapState, getOpenDocumentBootstrapFailure, getRuntimeLocationHash, inferCurrentDocumentFromEditorShell } from '../src/editor-bootstrap-state';
 import { EXTENSION_VERSION } from '../src/extension-metadata';
 import { withHostMethodTimeout } from '../src/host-method-timeout';
@@ -229,6 +233,25 @@ test('shouldAttemptBridgeWatchdogReconnect retries when a reload drops the bridg
 			0,
 		),
 		true,
+	);
+});
+
+test('shouldUseHostUiImportFallback only retries unchanged empty PCB imports', () => {
+	assert.equal(
+		shouldUseHostUiImportFallback(true, false, { componentCount: 0 }, { componentCount: 0 }),
+		true,
+	);
+	assert.equal(
+		shouldUseHostUiImportFallback(false, false, { componentCount: 0 }, { componentCount: 0 }),
+		false,
+	);
+	assert.equal(
+		shouldUseHostUiImportFallback(true, true, { componentCount: 0 }, { componentCount: 0 }),
+		false,
+	);
+	assert.equal(
+		shouldUseHostUiImportFallback(true, false, { componentCount: 0 }, { componentCount: 1 }),
+		false,
 	);
 });
 

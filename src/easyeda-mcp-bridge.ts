@@ -1,5 +1,6 @@
 import type { BridgeHeaderMenuDocumentLike } from './bridge-header-menus';
 import type { BridgeMethod, BridgeRequestEnvelope } from './mcp-bridge-protocol';
+import type { PcbSourceSummary } from './project-readback-guards';
 
 import { shouldSyncBridgeHeaderMenus, syncBridgeHeaderMenus } from './bridge-header-menus';
 import { getSchematicNetLabelCapabilitySummary } from './bridge-runtime-capabilities';
@@ -187,6 +188,15 @@ export function getEasyedaMcpBridgeState(): BridgeState {
 	hydratePersistedBridgeState();
 	bridgeState.endpoint = getBridgeEndpoint();
 	return { ...bridgeState };
+}
+
+export function shouldUseHostUiImportFallback(
+	hostImported: boolean,
+	readbackVerified: boolean,
+	beforeSummary: Pick<PcbSourceSummary, 'componentCount'>,
+	afterSummary: Pick<PcbSourceSummary, 'componentCount'>,
+): boolean {
+	return hostImported && !readbackVerified && beforeSummary.componentCount === 0 && afterSummary.componentCount === 0;
 }
 
 export async function configureEasyedaMcpBridge(): Promise<void> {
@@ -652,7 +662,6 @@ async function importSchematicToPcb(params: Record<string, unknown>): Promise<Re
 	const {
 		parentBoardName,
 		schematicUuid,
-		schematicPageUuid,
 		titleBlockBoardName,
 		inventoryTitleBlockBoardName,
 		sourceTitleBlockBoardName,
@@ -669,12 +678,12 @@ async function importSchematicToPcb(params: Record<string, unknown>): Promise<Re
 		afterSource,
 		allowEmptyResult,
 	);
-	let emptyPcbNetlistFallbackUsed = false;
+	let emptyPcbHostUiFallbackUsed = false;
 
-	if (hostImported && !readbackVerified && beforeSummary.componentCount === 0 && afterSummary.componentCount === 0) {
-		const fallbackImported = await importEmptyPcbFromLinkedSchematicNetlist(schematicPageUuid, pcbUuid);
+	if (shouldUseHostUiImportFallback(hostImported, readbackVerified, beforeSummary, afterSummary)) {
+		const fallbackImported = await importEmptyPcbFromHostUi(pcbUuid);
 		if (fallbackImported) {
-			emptyPcbNetlistFallbackUsed = true;
+			emptyPcbHostUiFallbackUsed = true;
 			saved = await savePcbDocumentIfRequested(pcbUuid, saveAfter);
 			afterSource = (await eda.sys_FileManager.getDocumentSource()) ?? '';
 			({ beforeSummary, afterSummary, sourceChanged, readbackVerified } = getImportReadbackStatus(
@@ -687,7 +696,7 @@ async function importSchematicToPcb(params: Record<string, unknown>): Promise<Re
 
 	if (hostImported && !readbackVerified) {
 		throw new Error(
-			`EasyEDA reported schematic import success for PCB ${pcbUuid}, but readback stayed empty and unchanged even though PCB ${pcbUuid} is linked to board ${parentBoardName} and schematic ${schematicUuid}. The host ignored pcb_Document.importChanges(${pcbUuid}), and the empty-PCB netlist fallback did not populate the target.`,
+			`EasyEDA reported schematic import success for PCB ${pcbUuid}, but readback stayed empty and unchanged even though PCB ${pcbUuid} is linked to board ${parentBoardName} and schematic ${schematicUuid}. The host ignored pcb_Document.importChanges(${pcbUuid}), and the empty-PCB host-UI fallback did not populate the target.`,
 		);
 	}
 
@@ -701,7 +710,7 @@ async function importSchematicToPcb(params: Record<string, unknown>): Promise<Re
 		importTargetReadbackVerified,
 		importTargetSourceFallbackUsed,
 		imported: hostImported,
-		emptyPcbNetlistFallbackUsed,
+		emptyPcbHostUiFallbackUsed,
 		saved,
 		allowEmptyResult,
 		sourceChanged,
@@ -2011,64 +2020,36 @@ async function getSchematicPageTitleBlockAttribute(schematicPageUuid: string, at
 	return getSchematicTitleBlockAttributeFromSource(source, attributeName);
 }
 
-async function importEmptyPcbFromLinkedSchematicNetlist(schematicPageUuid: string, pcbUuid: string): Promise<boolean> {
-	if (!schematicPageUuid)
-		return false;
-
-	const currentDocument = await requireCurrentDocument();
-	if (currentDocument.uuid !== schematicPageUuid || currentDocument.documentType !== EDMT_EditorDocumentType.SCHEMATIC_PAGE)
-		await eda.dmt_EditorControl.openDocument(schematicPageUuid);
-
-	await requireCurrentDocumentType(
-		EDMT_EditorDocumentType.SCHEMATIC_PAGE,
-		`Schematic page ${schematicPageUuid} must be open before reading the linked netlist fallback`,
-	);
-	const rawNetlist = await getActiveSchematicNetlist();
-	const compareMap = buildEmptyPcbImportCompareMapFromSchematicNetlist(rawNetlist);
-	if (Object.keys(compareMap).length === 0)
-		return false;
-
+async function importEmptyPcbFromHostUi(pcbUuid: string): Promise<boolean> {
 	await openPcbDocumentIfNeeded(pcbUuid);
-	await applyPcbNetlistUpdate(compareMap);
-	return true;
-}
+	const shellWindow = getAccessibleEditorShellWindow();
+	const shellDocument = shellWindow?.document;
+	if (!shellWindow || !shellDocument)
+		throw new Error('This EasyEDA host does not expose the editor shell document, so the empty-PCB host-UI import fallback is unavailable.');
 
-async function getActiveSchematicNetlist(): Promise<string> {
-	const schematicNetlistApi = (eda as typeof eda & {
-		sch_Netlist?: {
-			getNetlist?: () => Promise<unknown>;
-		};
-	}).sch_Netlist;
-	if (typeof schematicNetlistApi?.getNetlist !== 'function')
-		throw new Error('This EasyEDA host does not expose sch_Netlist.getNetlist, so empty-PCB schematic import fallback is unavailable.');
+	await openTopBarMenu(shellDocument, 'Design', 'mm-common-design');
+	const importMenuItem = await waitForShellElement(
+		() => findMenuItemByText(shellDocument, 'mm-common-design', 'Import Changes from Schematic'),
+		1_500,
+	);
+	if (!importMenuItem)
+		throw new Error('EasyEDA did not expose Design -> Import Changes from Schematic, so the empty-PCB host-UI import fallback is unavailable.');
 
-	const rawNetlist = await schematicNetlistApi.getNetlist();
-	if (typeof rawNetlist !== 'string' || !rawNetlist.trim())
-		throw new Error('EasyEDA returned an empty schematic netlist while preparing the empty-PCB import fallback.');
+	const itemHandled = await triggerReactClick(importMenuItem);
+	if (!itemHandled)
+		(importMenuItem as HTMLElement).click();
 
-	return rawNetlist;
-}
+	const applyButton = await waitForShellElement(
+		() => findClickableElementByText(shellDocument, 'Apply Changes', ['button']),
+		5_000,
+	);
+	if (!applyButton)
+		return false;
 
-async function applyPcbNetlistUpdate(compareMap: Record<string, Record<string, unknown>>): Promise<void> {
-	const messageBusApi = (eda as typeof eda & {
-		sys_MessageBus?: {
-			rpcCall?: (method: string, payload?: unknown, targetWindow?: Window) => Promise<unknown>;
-		};
-	}).sys_MessageBus;
-	if (typeof messageBusApi?.rpcCall !== 'function')
-		throw new Error('This EasyEDA host does not expose sys_MessageBus.rpcCall, so empty-PCB schematic import fallback is unavailable.');
-
-	await withHostMethodTimeout(
-		'pcb/editor/updateForNetList',
+	(applyButton as HTMLElement).click();
+	return waitForShellCondition(
+		() => !findClickableElementByText(shellDocument, 'Apply Changes', ['button']),
 		15_000,
-		() => messageBusApi.rpcCall('pcb/editor/updateForNetList', {
-			compareMap,
-			options: {
-				source: 'sch2pcb',
-				updateConnectNet: true,
-			},
-		}),
-		'The EasyEDA host did not finish applying the empty-PCB schematic import fallback.',
 	);
 }
 
@@ -2167,6 +2148,112 @@ function getAccessibleEditorShellWindow(): (Window & typeof globalThis) | undefi
 	}
 
 	return typeof window !== 'undefined' ? window : undefined;
+}
+
+async function openTopBarMenu(doc: Document, menuTitle: string, expectedMenuId: string): Promise<void> {
+	const titleNode = findElementByTitle(doc, menuTitle);
+	if (!titleNode)
+		throw new Error(`EasyEDA did not expose the ${menuTitle} top-bar menu while preparing the empty-PCB host-UI import fallback.`);
+
+	const reactProps = getReactProps<Record<string, unknown>>(titleNode);
+	const onClick = typeof reactProps?.onClick === 'function' ? reactProps.onClick as (event: unknown) => Promise<unknown> | unknown : undefined;
+	if (!onClick)
+		throw new Error(`EasyEDA did not expose a clickable ${menuTitle} top-bar menu while preparing the empty-PCB host-UI import fallback.`);
+
+	await onClick(createSyntheticReactMouseEvent(titleNode));
+	const menuOpened = await waitForShellCondition(() => Boolean(doc.getElementById(expectedMenuId)), 1_500);
+	if (!menuOpened)
+		throw new Error(`EasyEDA did not open the ${menuTitle} menu while preparing the empty-PCB host-UI import fallback.`);
+}
+
+async function triggerReactClick(element: Element): Promise<boolean> {
+	const reactProps = getReactProps<Record<string, unknown>>(element);
+	const onClick = typeof reactProps?.onClick === 'function' ? reactProps.onClick as (event: unknown) => Promise<unknown> | unknown : undefined;
+	if (!onClick)
+		return false;
+
+	await onClick(createSyntheticReactMouseEvent(element));
+	return true;
+}
+
+function createSyntheticReactMouseEvent(element: Element): {
+	ctrlKey: false;
+	currentTarget: Element;
+	target: Element;
+	preventDefault: () => void;
+	stopPropagation: () => void;
+} {
+	return {
+		ctrlKey: false,
+		currentTarget: element,
+		target: element,
+		preventDefault() {},
+		stopPropagation() {},
+	};
+}
+
+async function waitForShellElement<T>(resolveElement: () => T | null | undefined, timeoutMs: number): Promise<T | undefined> {
+	let resolved = resolveElement();
+	if (resolved)
+		return resolved;
+
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		await delay(50);
+		resolved = resolveElement();
+		if (resolved)
+			return resolved;
+	}
+
+	return undefined;
+}
+
+async function waitForShellCondition(predicate: () => boolean, timeoutMs: number): Promise<boolean> {
+	if (predicate())
+		return true;
+
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		await delay(50);
+		if (predicate())
+			return true;
+	}
+
+	return false;
+}
+
+function delay(timeoutMs: number): Promise<void> {
+	return new Promise(resolve => setTimeout(resolve, timeoutMs));
+}
+
+function findElementByTitle(doc: Document, title: string): Element | undefined {
+	return Array.from(doc.querySelectorAll('[title]')).find(element => element.getAttribute('title') === title);
+}
+
+function findMenuItemByText(doc: Document, menuId: string, text: string): Element | undefined {
+	const menu = doc.getElementById(menuId);
+	if (!menu)
+		return undefined;
+
+	return Array.from(menu.querySelectorAll('.eda-menu-item_g86Ag')).find(element => (element.textContent || '').includes(text));
+}
+
+function findClickableElementByText(doc: Document, text: string, tagNames?: string[]): Element | undefined {
+	const normalizedTagNames = tagNames?.map(name => name.toUpperCase());
+	return Array.from(doc.querySelectorAll('*')).find((element) => {
+		if (normalizedTagNames && !normalizedTagNames.includes(element.tagName.toUpperCase()))
+			return false;
+
+		return (element.textContent || '').trim() === text;
+	});
+}
+
+function getReactProps<T>(element: Element): T | undefined {
+	const key = Object.keys(element).find(candidate => candidate.startsWith('__reactProps$'));
+	if (!key)
+		return undefined;
+
+	return (element as Element & Record<string, unknown>)[key] as T | undefined;
 }
 
 function getEditorShellIframes(doc: Document | undefined): Array<{ id?: string; src?: string; className?: string }> {
