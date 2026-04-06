@@ -3,7 +3,7 @@ import type { BridgeMethod, BridgeRequestEnvelope } from './mcp-bridge-protocol'
 import { syncBridgeHeaderMenus } from './bridge-header-menus';
 import { getSchematicNetLabelCapabilitySummary } from './bridge-runtime-capabilities';
 import { allocateBridgeSocketId, shouldHandleBridgeSocketCallback } from './bridge-socket-lifecycle';
-import { describeEditorBootstrapState, getOpenDocumentBootstrapFailure, getRuntimeLocationHash } from './editor-bootstrap-state';
+import { describeEditorBootstrapState, getOpenDocumentBootstrapFailure, getRuntimeLocationHash, inferCurrentDocumentFromEditorShell } from './editor-bootstrap-state';
 import { EXTENSION_VERSION } from './extension-metadata';
 import { withHostMethodTimeout } from './host-method-timeout';
 import {
@@ -436,12 +436,20 @@ function echoBridge(params: Record<string, unknown>): Record<string, unknown> {
 }
 
 async function getCurrentContext(): Promise<Record<string, unknown>> {
-	const [currentDocument, currentProject] = await Promise.all([
+	const [hostCurrentDocument, hostCurrentProject] = await Promise.all([
 		eda.dmt_SelectControl.getCurrentDocumentInfo(),
 		eda.dmt_Project.getCurrentProjectInfo(),
 	]);
 	const splitScreenTree = await eda.dmt_EditorControl.getSplitScreenTree();
-	const editorBootstrapState = describeEditorBootstrapState(currentDocument, splitScreenTree, getRuntimeLocationHash(location));
+	const shellWindow = getAccessibleEditorShellWindow();
+	const editorShellHash = getRuntimeLocationHash(shellWindow?.location) || getRuntimeLocationHash(location);
+	const currentDocument = inferCurrentDocumentFromEditorShell(
+		hostCurrentDocument,
+		editorShellHash,
+		getEditorShellIframes(shellWindow?.document),
+	) ?? hostCurrentDocument;
+	const currentProject = hostCurrentProject ?? inferCurrentProjectFromShell(editorShellHash);
+	const editorBootstrapState = describeEditorBootstrapState(currentDocument, splitScreenTree, editorShellHash);
 
 	return {
 		currentDocument,
@@ -1818,7 +1826,8 @@ function getSupportedMethods(): BridgeMethod[] {
 }
 
 async function requireCurrentDocument(): Promise<IDMT_EditorDocumentItem> {
-	const currentDocument = await eda.dmt_SelectControl.getCurrentDocumentInfo();
+	const currentContext = await getCurrentContext();
+	const currentDocument = currentContext.currentDocument as IDMT_EditorDocumentItem | undefined;
 	if (!currentDocument)
 		throw new Error('No active EasyEDA document is focused');
 
@@ -1826,12 +1835,47 @@ async function requireCurrentDocument(): Promise<IDMT_EditorDocumentItem> {
 }
 
 async function openPcbDocumentIfNeeded(pcbUuid: string): Promise<void> {
-	const currentDocument = await eda.dmt_SelectControl.getCurrentDocumentInfo();
+	const currentDocument = await requireCurrentDocument();
 	if (currentDocument?.uuid === pcbUuid && currentDocument.documentType === EDMT_EditorDocumentType.PCB)
 		return;
 
 	await eda.dmt_EditorControl.openDocument(pcbUuid);
 	await requireCurrentDocumentType(EDMT_EditorDocumentType.PCB, `PCB ${pcbUuid} must be open before schematic import readback`);
+}
+
+function getAccessibleEditorShellWindow(): (Window & typeof globalThis) | undefined {
+	try {
+		if (typeof window !== 'undefined' && window.top)
+			return window.top;
+	}
+	catch {
+		// Ignore cross-window access issues and fall back to the local runtime window.
+	}
+
+	return typeof window !== 'undefined' ? window : undefined;
+}
+
+function getEditorShellIframes(doc: Document | undefined): Array<{ id?: string; src?: string; className?: string }> {
+	if (!doc?.querySelectorAll)
+		return [];
+
+	return Array.from(doc.querySelectorAll('iframe')).map(frame => ({
+		id: frame.id || undefined,
+		src: frame.getAttribute('src') || undefined,
+		className: frame.className || undefined,
+	}));
+}
+
+function inferCurrentProjectFromShell(urlHash: string): Record<string, unknown> | undefined {
+	const projectMatch = urlHash.match(/(?:^|[#,])id=([^,]+)/);
+	const projectUuid = projectMatch?.[1] ? decodeURIComponent(projectMatch[1]) : undefined;
+	if (!projectUuid)
+		return undefined;
+
+	return {
+		uuid: projectUuid,
+		inferredFromEditorShell: true,
+	};
 }
 
 interface ProjectInventory {

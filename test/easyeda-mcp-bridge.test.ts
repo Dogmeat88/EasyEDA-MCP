@@ -4,7 +4,7 @@ import test from 'node:test';
 import { shouldSyncBridgeHeaderMenus, syncBridgeHeaderMenus } from '../src/bridge-header-menus';
 import { getSchematicNetLabelCapabilitySummary } from '../src/bridge-runtime-capabilities';
 import { allocateBridgeSocketId, shouldHandleBridgeSocketCallback } from '../src/bridge-socket-lifecycle';
-import { describeEditorBootstrapState, getOpenDocumentBootstrapFailure, getRuntimeLocationHash } from '../src/editor-bootstrap-state';
+import { describeEditorBootstrapState, getOpenDocumentBootstrapFailure, getRuntimeLocationHash, inferCurrentDocumentFromEditorShell } from '../src/editor-bootstrap-state';
 import { EXTENSION_VERSION } from '../src/extension-metadata';
 import { withHostMethodTimeout } from '../src/host-method-timeout';
 import { computeSourceRevision } from '../src/mcp-bridge-protocol';
@@ -48,6 +48,34 @@ test('getRuntimeLocationHash tolerates undefined runtime location objects', () =
 	assert.equal(getRuntimeLocationHash({ hash: 123 }), '');
 	assert.equal(getRuntimeLocationHash(undefined), '');
 	assert.equal(getRuntimeLocationHash(null), '');
+});
+
+test('inferCurrentDocumentFromEditorShell recovers the active PCB tab from the top-level hash and iframe ids', () => {
+	assert.deepEqual(
+		inferCurrentDocumentFromEditorShell(
+			{ documentType: -1, uuid: 'tab_page1' },
+			'#id=project-1,tab=sch-1@project-1|*pcb-1@project-1',
+			[{ id: 'frame_pcb-1@project-1', src: 'editor?entry=pcb' }],
+		),
+		{
+			documentType: 3,
+			inferredFromEditorShell: true,
+			projectUuid: 'project-1',
+			sourceFrameId: 'frame_pcb-1@project-1',
+			uuid: 'pcb-1',
+		},
+	);
+});
+
+test('inferCurrentDocumentFromEditorShell stays silent when the editor shell has no matching iframe for the active tab', () => {
+	assert.equal(
+		inferCurrentDocumentFromEditorShell(
+			{ documentType: -1, uuid: 'tab_page1' },
+			'#id=project-1,tab=*pcb-1@project-1',
+			[{ id: 'frame_other@project-1', src: 'editor?entry=pcb' }],
+		),
+		undefined,
+	);
 });
 
 test('extension version is sourced from extension.json', async () => {

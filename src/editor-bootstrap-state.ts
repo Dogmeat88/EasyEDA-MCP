@@ -6,8 +6,50 @@ export interface EditorBootstrapStateInput {
 	suspectedBootstrapFailure?: boolean;
 }
 
+export interface EditorShellIframeDescriptor {
+	id?: string;
+	src?: string;
+	className?: string;
+}
+
+const DOCUMENT_TYPE_SCHEMATIC_PAGE = 1;
+const DOCUMENT_TYPE_PCB = 3;
+const DOCUMENT_TYPE_PANEL = 26;
+
 export function getRuntimeLocationHash(locationLike: { hash?: unknown } | undefined | null): string {
 	return typeof locationLike?.hash === 'string' ? locationLike.hash : '';
+}
+
+export function inferCurrentDocumentFromEditorShell(
+	currentDocument: Record<string, unknown> | undefined,
+	urlHash: string,
+	iframeDescriptors: EditorShellIframeDescriptor[],
+): Record<string, unknown> | undefined {
+	const currentDocumentUuid = typeof currentDocument?.uuid === 'string' ? currentDocument.uuid : undefined;
+	if (currentDocumentUuid && currentDocumentUuid !== 'tab_page1')
+		return undefined;
+
+	const activeTab = getActiveRequestedTab(urlHash);
+	if (!activeTab)
+		return undefined;
+
+	const { documentUuid, projectUuid } = parseRequestedTab(activeTab);
+	if (!documentUuid)
+		return undefined;
+
+	const matchingIframe = iframeDescriptors.find(iframe => matchesRequestedDocumentIframe(iframe, documentUuid, projectUuid));
+	const inferredDocumentType = inferDocumentTypeFromIframeSrc(matchingIframe?.src);
+	if (inferredDocumentType === undefined)
+		return undefined;
+
+	return {
+		...(isRecord(currentDocument) ? currentDocument : {}),
+		documentType: inferredDocumentType,
+		inferredFromEditorShell: true,
+		projectUuid,
+		sourceFrameId: matchingIframe?.id,
+		uuid: documentUuid,
+	};
 }
 
 export function describeEditorBootstrapState(
@@ -73,6 +115,55 @@ function getRequestedTabIds(hash: string): string[] {
 		.split('|')
 		.map(entry => entry.trim())
 		.filter(Boolean);
+}
+
+function getActiveRequestedTab(hash: string): string | undefined {
+	const requestedTabs = getRequestedTabIds(hash);
+	if (requestedTabs.length === 0)
+		return undefined;
+
+	return requestedTabs.find(entry => entry.startsWith('*')) ?? requestedTabs[requestedTabs.length - 1];
+}
+
+function parseRequestedTab(tabEntry: string): { documentUuid?: string; projectUuid?: string } {
+	const normalizedEntry = tabEntry.startsWith('*') ? tabEntry.slice(1) : tabEntry;
+	const [documentUuid, projectUuid] = normalizedEntry.split('@');
+	return {
+		documentUuid: documentUuid || undefined,
+		projectUuid: projectUuid || undefined,
+	};
+}
+
+function matchesRequestedDocumentIframe(
+	iframe: EditorShellIframeDescriptor,
+	documentUuid: string,
+	projectUuid?: string,
+): boolean {
+	if (!iframe.id)
+		return false;
+
+	const expectedFramePrefix = `frame_${documentUuid}`;
+	if (!iframe.id.startsWith(expectedFramePrefix))
+		return false;
+
+	if (!projectUuid)
+		return true;
+
+	return iframe.id === `${expectedFramePrefix}@${projectUuid}` || iframe.id.startsWith(`${expectedFramePrefix}@`);
+}
+
+function inferDocumentTypeFromIframeSrc(src: string | undefined): number | undefined {
+	if (!src)
+		return undefined;
+
+	if (src.includes('entry=pcb'))
+		return DOCUMENT_TYPE_PCB;
+	if (src.includes('entry=sch'))
+		return DOCUMENT_TYPE_SCHEMATIC_PAGE;
+	if (src.includes('entry=panel'))
+		return DOCUMENT_TYPE_PANEL;
+
+	return undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
