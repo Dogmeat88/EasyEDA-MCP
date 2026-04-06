@@ -23,7 +23,14 @@ import { getOptionalTrimmedStringIncludingEmpty, resolvePcbLineNetForCreate } fr
 import { findResolvedPcbPad } from './pcb-pad-geometry';
 import { buildPcbPolylineSource } from './pcb-polyline';
 import { findAddedPrimitiveIds } from './primitive-id-diff';
-import { getImportReadbackStatus, verifyCreatedBoard, verifyCreatedPcb, verifyPcbImportTarget } from './project-readback-guards';
+import {
+	getImportReadbackStatus,
+	getPcbImportTargetSnapshot,
+	getSchematicTitleBlockAttributeFromSource,
+	verifyCreatedBoard,
+	verifyCreatedPcb,
+	verifyPcbImportTarget,
+} from './project-readback-guards';
 import { buildSchematicPinStubLine } from './schematic-pin-stub';
 
 interface BridgeState {
@@ -642,11 +649,15 @@ async function importSchematicToPcb(params: Record<string, unknown>): Promise<Re
 	const saveAfter = getOptionalBoolean(params.saveAfter);
 	const allowEmptyResult = getOptionalBoolean(params.allowEmptyResult) === true;
 	const projectInventory = await getVerifiedProjectInventory();
-	const { parentBoardName, schematicUuid, titleBlockBoardName, readbackVerified: importTargetReadbackVerified } = verifyPcbImportTarget(
-		projectInventory.boards,
-		projectInventory.pcbs,
-		pcbUuid,
-	);
+	const {
+		parentBoardName,
+		schematicUuid,
+		titleBlockBoardName,
+		inventoryTitleBlockBoardName,
+		sourceTitleBlockBoardName,
+		readbackVerified: importTargetReadbackVerified,
+		sourceFallbackUsed: importTargetSourceFallbackUsed,
+	} = await resolvePcbImportTargetReadback(projectInventory, pcbUuid);
 	await openPcbDocumentIfNeeded(pcbUuid);
 	const beforeSource = (await eda.sys_FileManager.getDocumentSource()) ?? '';
 	const imported = await eda.pcb_Document.importChanges(pcbUuid);
@@ -669,7 +680,10 @@ async function importSchematicToPcb(params: Record<string, unknown>): Promise<Re
 		parentBoardName,
 		schematicUuid,
 		titleBlockBoardName,
+		inventoryTitleBlockBoardName,
+		sourceTitleBlockBoardName,
 		importTargetReadbackVerified,
+		importTargetSourceFallbackUsed,
 		imported,
 		saved,
 		allowEmptyResult,
@@ -678,6 +692,52 @@ async function importSchematicToPcb(params: Record<string, unknown>): Promise<Re
 		beforeSummary,
 		afterSummary,
 	};
+}
+
+async function resolvePcbImportTargetReadback(
+	projectInventory: ProjectInventory,
+	pcbUuid: string,
+): Promise<{
+	parentBoardName: string;
+	schematicUuid: string;
+	titleBlockBoardName?: string;
+	inventoryTitleBlockBoardName?: string;
+	sourceTitleBlockBoardName?: string;
+	readbackVerified: true;
+	sourceFallbackUsed: boolean;
+}> {
+	const snapshot = getPcbImportTargetSnapshot(projectInventory.boards, projectInventory.pcbs, pcbUuid);
+
+	try {
+		const verified = verifyPcbImportTarget(projectInventory.boards, projectInventory.pcbs, pcbUuid);
+		return {
+			...verified,
+			inventoryTitleBlockBoardName: verified.titleBlockBoardName,
+			sourceFallbackUsed: false,
+		};
+	}
+	catch (error: unknown) {
+		const parentBoardName = snapshot.parentBoardName;
+		const schematicUuid = snapshot.schematicUuid;
+		const schematicPageUuid = snapshot.schematicPageUuid;
+		const inventoryTitleBlockBoardName = snapshot.titleBlockBoardName;
+		if (!parentBoardName || !schematicUuid || !schematicPageUuid || !inventoryTitleBlockBoardName || inventoryTitleBlockBoardName === parentBoardName)
+			throw error;
+
+		const sourceTitleBlockBoardName = await getSchematicPageTitleBlockAttribute(schematicPageUuid, '@Board Name');
+		if (!sourceTitleBlockBoardName || sourceTitleBlockBoardName !== parentBoardName)
+			throw error;
+
+		return {
+			parentBoardName,
+			schematicUuid,
+			titleBlockBoardName: sourceTitleBlockBoardName,
+			inventoryTitleBlockBoardName,
+			sourceTitleBlockBoardName,
+			readbackVerified: true,
+			sourceFallbackUsed: true,
+		};
+	}
 }
 
 async function createPanel(): Promise<Record<string, unknown>> {
@@ -1912,6 +1972,20 @@ async function openPcbDocumentIfNeeded(pcbUuid: string): Promise<void> {
 
 	await eda.dmt_EditorControl.openDocument(pcbUuid);
 	await requireCurrentDocumentType(EDMT_EditorDocumentType.PCB, `PCB ${pcbUuid} must be open before schematic import readback`);
+}
+
+async function getSchematicPageTitleBlockAttribute(schematicPageUuid: string, attributeName: string): Promise<string | undefined> {
+	const currentDocument = await requireCurrentDocument();
+	if (currentDocument.uuid !== schematicPageUuid || currentDocument.documentType !== EDMT_EditorDocumentType.SCHEMATIC_PAGE) {
+		await eda.dmt_EditorControl.openDocument(schematicPageUuid);
+	}
+
+	await requireCurrentDocumentType(
+		EDMT_EditorDocumentType.SCHEMATIC_PAGE,
+		`Schematic page ${schematicPageUuid} must be open before title-block source readback`,
+	);
+	const source = (await eda.sys_FileManager.getDocumentSource()) ?? '';
+	return getSchematicTitleBlockAttributeFromSource(source, attributeName);
 }
 
 function getAccessibleEditorShellWindow(): (Window & typeof globalThis) | undefined {

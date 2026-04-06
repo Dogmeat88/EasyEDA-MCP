@@ -10,6 +10,15 @@ export interface PcbSourceSummary {
 	totalParsedEntries: number;
 }
 
+export interface PcbImportTargetSnapshot {
+	boardFound: boolean;
+	pcbFound: boolean;
+	parentBoardName?: string;
+	schematicPageUuid?: string;
+	schematicUuid?: string;
+	titleBlockBoardName?: string;
+}
+
 export function verifyCreatedPcb(projectPcbs: unknown[], pcbUuid: string, expectedBoardName?: string): {
 	parentBoardName?: string;
 	readbackVerified: true;
@@ -85,32 +94,32 @@ export function verifyPcbImportTarget(
 	titleBlockBoardName?: string;
 	readbackVerified: true;
 } {
-	const pcb = findProjectPcbByUuid(projectPcbs, pcbUuid);
-	if (!pcb)
+	const snapshot = getPcbImportTargetSnapshot(projectBoards, projectPcbs, pcbUuid);
+	if (!snapshot.pcbFound) {
 		throw new Error(`import_schematic_to_pcb could not find PCB ${pcbUuid} in project inventory`);
+	}
 
-	const parentBoardName = getProjectPcbParentBoardName(pcb);
+	const parentBoardName = snapshot.parentBoardName;
 	if (!parentBoardName) {
 		throw new Error(
 			`import_schematic_to_pcb requires PCB ${pcbUuid} to belong to a board linked to a schematic, but readback shows no parent board`,
 		);
 	}
 
-	const board = findProjectBoardByName(projectBoards, parentBoardName);
-	if (!board) {
+	if (!snapshot.boardFound) {
 		throw new Error(
 			`import_schematic_to_pcb requires PCB ${pcbUuid} to belong to a board linked to a schematic, but board ${parentBoardName} is missing from project inventory`,
 		);
 	}
 
-	const schematicUuid = getProjectBoardSchematicUuid(board);
+	const schematicUuid = snapshot.schematicUuid;
 	if (!schematicUuid) {
 		throw new Error(
 			`import_schematic_to_pcb requires PCB ${pcbUuid} to belong to a board linked to a schematic, but board ${parentBoardName} has no linked schematic`,
 		);
 	}
 
-	const titleBlockBoardName = getProjectBoardSchematicTitleBlockBoardName(board);
+	const titleBlockBoardName = snapshot.titleBlockBoardName;
 	if (titleBlockBoardName && titleBlockBoardName !== parentBoardName) {
 		throw new Error(
 			`import_schematic_to_pcb requires a coherent board/schematic link, but board ${parentBoardName} is backed by a schematic whose title block still advertises board ${titleBlockBoardName}`,
@@ -123,6 +132,51 @@ export function verifyPcbImportTarget(
 		titleBlockBoardName,
 		readbackVerified: true,
 	};
+}
+
+export function getPcbImportTargetSnapshot(
+	projectBoards: unknown[],
+	projectPcbs: unknown[],
+	pcbUuid: string,
+): PcbImportTargetSnapshot {
+	const pcb = findProjectPcbByUuid(projectPcbs, pcbUuid);
+	if (!pcb)
+		return { boardFound: false, pcbFound: false };
+
+	const parentBoardName = getProjectPcbParentBoardName(pcb);
+	if (!parentBoardName)
+		return { boardFound: false, pcbFound: true };
+
+	const board = findProjectBoardByName(projectBoards, parentBoardName);
+	if (!board)
+		return { boardFound: false, pcbFound: true, parentBoardName };
+
+	const schematicUuid = getProjectBoardSchematicUuid(board);
+	const titleBlockBoardName = getProjectBoardSchematicTitleBlockBoardName(board);
+
+	return {
+		boardFound: true,
+		pcbFound: true,
+		parentBoardName,
+		schematicPageUuid: getProjectBoardSchematicPageUuid(board),
+		schematicUuid,
+		titleBlockBoardName,
+	};
+}
+
+export function getSchematicTitleBlockAttributeFromSource(source: string, attributeName: string): string | undefined {
+	for (const line of source.split('\n')) {
+		const parsed = parseSourceLine(line);
+		if (!parsed)
+			continue;
+
+		if (parsed[0] !== 'ATTR' || parsed[3] !== attributeName)
+			continue;
+
+		return getOptionalString(parsed[4]);
+	}
+
+	return undefined;
 }
 
 export function getImportReadbackStatus(beforeSource: string, afterSource: string, allowEmptyResult: boolean): {
@@ -226,6 +280,20 @@ function getProjectBoardSchematicTitleBlockBoardName(board: Record<string, unkno
 		const titleBlockBoardName = getTitleBlockValue(page?.titleBlockData, '@Board Name');
 		if (titleBlockBoardName)
 			return titleBlockBoardName;
+	}
+
+	return undefined;
+}
+
+function getProjectBoardSchematicPageUuid(board: Record<string, unknown>): string | undefined {
+	const schematic = isRecord(board.schematic) ? board.schematic : undefined;
+	const pages = Array.isArray(schematic?.page) ? schematic.page : [];
+
+	for (const entry of pages) {
+		const page = isRecord(entry) ? entry : undefined;
+		const pageUuid = getOptionalString(page?.uuid);
+		if (pageUuid)
+			return pageUuid;
 	}
 
 	return undefined;

@@ -11,7 +11,14 @@ import { withHostMethodTimeout } from '../src/host-method-timeout';
 import { computeSourceRevision } from '../src/mcp-bridge-protocol';
 import { getOptionalTrimmedStringIncludingEmpty, resolvePcbLineNetForCreate } from '../src/pcb-line-net';
 import { findAddedPrimitiveIds } from '../src/primitive-id-diff';
-import { getImportReadbackStatus, verifyCreatedBoard, verifyCreatedPcb, verifyPcbImportTarget } from '../src/project-readback-guards';
+import {
+	getImportReadbackStatus,
+	getPcbImportTargetSnapshot,
+	getSchematicTitleBlockAttributeFromSource,
+	verifyCreatedBoard,
+	verifyCreatedPcb,
+	verifyPcbImportTarget,
+} from '../src/project-readback-guards';
 import { buildSchematicPinStubLine } from '../src/schematic-pin-stub';
 
 function createPin(x: number, y: number, rotation: number, pinLength = 10) {
@@ -339,6 +346,43 @@ test('verifyPcbImportTarget fails when the linked schematic title block still po
 		),
 		/title block still advertises board Board1/,
 	);
+});
+
+test('getPcbImportTargetSnapshot captures the linked schematic page uuid for fallback source reads', () => {
+	const snapshot = getPcbImportTargetSnapshot(
+		[
+			{
+				name: 'Board1_2',
+				schematic: {
+					uuid: 'sch-2',
+					page: [{ uuid: 'page-2', titleBlockData: { '@Board Name': { value: 'Board1_1' } } }],
+				},
+			},
+		],
+		[{ uuid: 'pcb-2', parentBoardName: 'Board1_2' }],
+		'pcb-2',
+	);
+
+	assert.deepEqual(snapshot, {
+		boardFound: true,
+		pcbFound: true,
+		parentBoardName: 'Board1_2',
+		schematicPageUuid: 'page-2',
+		schematicUuid: 'sch-2',
+		titleBlockBoardName: 'Board1_1',
+	});
+});
+
+test('getSchematicTitleBlockAttributeFromSource reads title block attributes from schematic source lines', () => {
+	const source = [
+		'["DOCTYPE","SCH","1.1"]',
+		'["ATTR","e28","e1","@Board Name","Board1_2",0,0,null,null,0,"st4",0]',
+		'["ATTR","e7","e1","@Schematic Name","Schematic1_1",null,null,null,null,null,"st1",0]',
+	].join('\n');
+
+	assert.equal(getSchematicTitleBlockAttributeFromSource(source, '@Board Name'), 'Board1_2');
+	assert.equal(getSchematicTitleBlockAttributeFromSource(source, '@Schematic Name'), 'Schematic1_1');
+	assert.equal(getSchematicTitleBlockAttributeFromSource(source, 'Missing'), undefined);
 });
 
 test('getImportReadbackStatus fails verification when PCB source stays empty and unchanged', () => {
