@@ -652,6 +652,7 @@ async function importSchematicToPcb(params: Record<string, unknown>): Promise<Re
 	const {
 		parentBoardName,
 		schematicUuid,
+		schematicPageUuid,
 		titleBlockBoardName,
 		inventoryTitleBlockBoardName,
 		sourceTitleBlockBoardName,
@@ -660,18 +661,33 @@ async function importSchematicToPcb(params: Record<string, unknown>): Promise<Re
 	} = await resolvePcbImportTargetReadback(projectInventory, pcbUuid);
 	await openPcbDocumentIfNeeded(pcbUuid);
 	const beforeSource = (await eda.sys_FileManager.getDocumentSource()) ?? '';
-	const imported = await eda.pcb_Document.importChanges(pcbUuid);
-	const saved = await savePcbDocumentIfRequested(pcbUuid, saveAfter);
-	const afterSource = (await eda.sys_FileManager.getDocumentSource()) ?? '';
-	const { beforeSummary, afterSummary, sourceChanged, readbackVerified } = getImportReadbackStatus(
+	const hostImported = await eda.pcb_Document.importChanges(pcbUuid);
+	let saved = await savePcbDocumentIfRequested(pcbUuid, saveAfter);
+	let afterSource = (await eda.sys_FileManager.getDocumentSource()) ?? '';
+	let { beforeSummary, afterSummary, sourceChanged, readbackVerified } = getImportReadbackStatus(
 		beforeSource,
 		afterSource,
 		allowEmptyResult,
 	);
+	let emptyPcbNetlistFallbackUsed = false;
 
-	if (imported && !readbackVerified) {
+	if (hostImported && !readbackVerified && beforeSummary.componentCount === 0 && afterSummary.componentCount === 0) {
+		const fallbackImported = await importEmptyPcbFromLinkedSchematicNetlist(schematicPageUuid, pcbUuid);
+		if (fallbackImported) {
+			emptyPcbNetlistFallbackUsed = true;
+			saved = await savePcbDocumentIfRequested(pcbUuid, saveAfter);
+			afterSource = (await eda.sys_FileManager.getDocumentSource()) ?? '';
+			({ beforeSummary, afterSummary, sourceChanged, readbackVerified } = getImportReadbackStatus(
+				beforeSource,
+				afterSource,
+				allowEmptyResult,
+			));
+		}
+	}
+
+	if (hostImported && !readbackVerified) {
 		throw new Error(
-			`EasyEDA reported schematic import success for PCB ${pcbUuid}, but readback stayed empty and unchanged even though PCB ${pcbUuid} is linked to board ${parentBoardName} and schematic ${schematicUuid}. The host likely ignored pcb_Document.importChanges(${pcbUuid}).`,
+			`EasyEDA reported schematic import success for PCB ${pcbUuid}, but readback stayed empty and unchanged even though PCB ${pcbUuid} is linked to board ${parentBoardName} and schematic ${schematicUuid}. The host ignored pcb_Document.importChanges(${pcbUuid}), and the empty-PCB netlist fallback did not populate the target.`,
 		);
 	}
 
@@ -684,7 +700,8 @@ async function importSchematicToPcb(params: Record<string, unknown>): Promise<Re
 		sourceTitleBlockBoardName,
 		importTargetReadbackVerified,
 		importTargetSourceFallbackUsed,
-		imported,
+		imported: hostImported,
+		emptyPcbNetlistFallbackUsed,
 		saved,
 		allowEmptyResult,
 		sourceChanged,
@@ -700,6 +717,7 @@ async function resolvePcbImportTargetReadback(
 ): Promise<{
 	parentBoardName: string;
 	schematicUuid: string;
+	schematicPageUuid: string;
 	titleBlockBoardName?: string;
 	inventoryTitleBlockBoardName?: string;
 	sourceTitleBlockBoardName?: string;
@@ -710,8 +728,12 @@ async function resolvePcbImportTargetReadback(
 
 	try {
 		const verified = verifyPcbImportTarget(projectInventory.boards, projectInventory.pcbs, pcbUuid);
+		if (!snapshot.schematicPageUuid)
+			throw new Error(`import_schematic_to_pcb requires board ${verified.parentBoardName} to expose a linked schematic page for readback`);
+
 		return {
 			...verified,
+			schematicPageUuid: snapshot.schematicPageUuid,
 			inventoryTitleBlockBoardName: verified.titleBlockBoardName,
 			sourceFallbackUsed: false,
 		};
@@ -731,6 +753,7 @@ async function resolvePcbImportTargetReadback(
 		return {
 			parentBoardName,
 			schematicUuid,
+			schematicPageUuid,
 			titleBlockBoardName: sourceTitleBlockBoardName,
 			inventoryTitleBlockBoardName,
 			sourceTitleBlockBoardName,
@@ -1988,6 +2011,152 @@ async function getSchematicPageTitleBlockAttribute(schematicPageUuid: string, at
 	return getSchematicTitleBlockAttributeFromSource(source, attributeName);
 }
 
+async function importEmptyPcbFromLinkedSchematicNetlist(schematicPageUuid: string, pcbUuid: string): Promise<boolean> {
+	if (!schematicPageUuid)
+		return false;
+
+	const currentDocument = await requireCurrentDocument();
+	if (currentDocument.uuid !== schematicPageUuid || currentDocument.documentType !== EDMT_EditorDocumentType.SCHEMATIC_PAGE)
+		await eda.dmt_EditorControl.openDocument(schematicPageUuid);
+
+	await requireCurrentDocumentType(
+		EDMT_EditorDocumentType.SCHEMATIC_PAGE,
+		`Schematic page ${schematicPageUuid} must be open before reading the linked netlist fallback`,
+	);
+	const rawNetlist = await getActiveSchematicNetlist();
+	const compareMap = buildEmptyPcbImportCompareMapFromSchematicNetlist(rawNetlist);
+	if (Object.keys(compareMap).length === 0)
+		return false;
+
+	await openPcbDocumentIfNeeded(pcbUuid);
+	await applyPcbNetlistUpdate(compareMap);
+	return true;
+}
+
+async function getActiveSchematicNetlist(): Promise<string> {
+	const schematicNetlistApi = (eda as typeof eda & {
+		sch_Netlist?: {
+			getNetlist?: () => Promise<unknown>;
+		};
+	}).sch_Netlist;
+	if (typeof schematicNetlistApi?.getNetlist !== 'function')
+		throw new Error('This EasyEDA host does not expose sch_Netlist.getNetlist, so empty-PCB schematic import fallback is unavailable.');
+
+	const rawNetlist = await schematicNetlistApi.getNetlist();
+	if (typeof rawNetlist !== 'string' || !rawNetlist.trim())
+		throw new Error('EasyEDA returned an empty schematic netlist while preparing the empty-PCB import fallback.');
+
+	return rawNetlist;
+}
+
+async function applyPcbNetlistUpdate(compareMap: Record<string, Record<string, unknown>>): Promise<void> {
+	const messageBusApi = (eda as typeof eda & {
+		sys_MessageBus?: {
+			rpcCall?: (method: string, payload?: unknown, targetWindow?: Window) => Promise<unknown>;
+		};
+	}).sys_MessageBus;
+	if (typeof messageBusApi?.rpcCall !== 'function')
+		throw new Error('This EasyEDA host does not expose sys_MessageBus.rpcCall, so empty-PCB schematic import fallback is unavailable.');
+
+	await withHostMethodTimeout(
+		'pcb/editor/updateForNetList',
+		15_000,
+		() => messageBusApi.rpcCall('pcb/editor/updateForNetList', {
+			compareMap,
+			options: {
+				source: 'sch2pcb',
+				updateConnectNet: true,
+			},
+		}),
+		'The EasyEDA host did not finish applying the empty-PCB schematic import fallback.',
+	);
+}
+
+export function buildEmptyPcbImportCompareMapFromSchematicNetlist(rawNetlist: string): Record<string, Record<string, unknown>> {
+	const parsed = parseSchematicNetlistJson(rawNetlist);
+	const compareMap: Record<string, Record<string, unknown>> = {};
+
+	for (const [uniqueId, rawComponent] of Object.entries(parsed)) {
+		const props = getRecord(rawComponent.props);
+		if (!props)
+			continue;
+
+		const footprintUuid = typeof props.Footprint === 'string' ? props.Footprint : undefined;
+		const deviceUuid = typeof props.Device === 'string' ? props.Device : undefined;
+		if (!footprintUuid || !deviceUuid)
+			continue;
+
+		const componentUniqueId = typeof props['Unique ID'] === 'string' && props['Unique ID']
+			? props['Unique ID']
+			: uniqueId;
+		const nets = normalizeSchematicNetlistPins(rawComponent.pins);
+		compareMap[componentUniqueId] = {
+			addComponent: {
+				uniqueId: componentUniqueId,
+				props,
+				nets,
+				extra: {
+					bindingLibs: {
+						device: {
+							uuid: deviceUuid,
+							isProLib: true,
+						},
+						footprint: {
+							uuid: footprintUuid,
+							isProLib: true,
+						},
+					},
+				},
+			},
+		};
+	}
+
+	return compareMap;
+}
+
+function parseSchematicNetlistJson(rawNetlist: string): Record<string, { props?: unknown; pins?: unknown }> {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(rawNetlist);
+	}
+	catch (error: unknown) {
+		throw new Error(`Could not parse EasyEDA schematic netlist JSON: ${toErrorMessage(error)}`);
+	}
+
+	if (!isRecord(parsed))
+		throw new Error('EasyEDA schematic netlist fallback returned a non-object JSON payload.');
+
+	return parsed as Record<string, { props?: unknown; pins?: unknown }>;
+}
+
+function normalizeSchematicNetlistPins(rawPins: unknown): Record<string, string> {
+	if (!isRecord(rawPins))
+		return {};
+
+	const nets: Record<string, string> = {};
+	for (const [pinNumber, value] of Object.entries(rawPins)) {
+		nets[pinNumber] = typeof value === 'string' ? value : '';
+	}
+
+	return nets;
+}
+
+function getRecord(value: unknown): Record<string, string> | undefined {
+	if (!isRecord(value))
+		return undefined;
+
+	const result: Record<string, string> = {};
+	for (const [key, entry] of Object.entries(value)) {
+		if (typeof entry === 'string')
+			result[key] = entry;
+	}
+	return result;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
 function getAccessibleEditorShellWindow(): (Window & typeof globalThis) | undefined {
 	try {
 		if (typeof window !== 'undefined' && window.top)
@@ -2197,10 +2366,6 @@ function getRequiredStringArray(value: unknown, key: string): string[] {
 		throw new Error(`Expected a non-empty string array for ${key}`);
 
 	return items;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function getOptionalLineCoordinates(value: unknown): Array<number> | Array<Array<number>> | undefined {

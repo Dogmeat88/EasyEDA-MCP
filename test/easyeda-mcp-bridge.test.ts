@@ -4,7 +4,7 @@ import test from 'node:test';
 import { shouldSyncBridgeHeaderMenus, syncBridgeHeaderMenus } from '../src/bridge-header-menus';
 import { getSchematicNetLabelCapabilitySummary } from '../src/bridge-runtime-capabilities';
 import { allocateBridgeSocketId, shouldHandleBridgeSocketCallback } from '../src/bridge-socket-lifecycle';
-import { shouldAttemptBridgeWatchdogReconnect } from '../src/easyeda-mcp-bridge';
+import { buildEmptyPcbImportCompareMapFromSchematicNetlist, shouldAttemptBridgeWatchdogReconnect } from '../src/easyeda-mcp-bridge';
 import { describeEditorBootstrapState, getOpenDocumentBootstrapFailure, getRuntimeLocationHash, inferCurrentDocumentFromEditorShell } from '../src/editor-bootstrap-state';
 import { EXTENSION_VERSION } from '../src/extension-metadata';
 import { withHostMethodTimeout } from '../src/host-method-timeout';
@@ -419,6 +419,97 @@ test('getImportReadbackStatus succeeds when source readback gains imported compo
 		viaCount: 0,
 		totalParsedEntries: 3,
 	});
+});
+
+test('buildEmptyPcbImportCompareMapFromSchematicNetlist converts schematic netlist JSON into add-component compare entries', () => {
+	const compareMap = buildEmptyPcbImportCompareMapFromSchematicNetlist(JSON.stringify({
+		gge101: {
+			props: {
+				'Designator': 'U1',
+				'Device': 'device-1',
+				'Footprint': 'footprint-1',
+				'Unique ID': 'gge101',
+			},
+			pins: {
+				1: 'GND',
+				24: 'BLINK',
+			},
+		},
+		gge102: {
+			props: {
+				Designator: 'R1',
+				Device: 'device-2',
+				Footprint: 'footprint-2',
+			},
+			pins: {
+				1: 'BLINK',
+				2: 'LED_SERIES',
+			},
+		},
+	}));
+
+	assert.deepEqual(compareMap, {
+		gge101: {
+			addComponent: {
+				uniqueId: 'gge101',
+				props: {
+					'Designator': 'U1',
+					'Device': 'device-1',
+					'Footprint': 'footprint-1',
+					'Unique ID': 'gge101',
+				},
+				nets: {
+					1: 'GND',
+					24: 'BLINK',
+				},
+				extra: {
+					bindingLibs: {
+						device: {
+							uuid: 'device-1',
+							isProLib: true,
+						},
+						footprint: {
+							uuid: 'footprint-1',
+							isProLib: true,
+						},
+					},
+				},
+			},
+		},
+		gge102: {
+			addComponent: {
+				uniqueId: 'gge102',
+				props: {
+					Designator: 'R1',
+					Device: 'device-2',
+					Footprint: 'footprint-2',
+				},
+				nets: {
+					1: 'BLINK',
+					2: 'LED_SERIES',
+				},
+				extra: {
+					bindingLibs: {
+						device: {
+							uuid: 'device-2',
+							isProLib: true,
+						},
+						footprint: {
+							uuid: 'footprint-2',
+							isProLib: true,
+						},
+					},
+				},
+			},
+		},
+	});
+});
+
+test('buildEmptyPcbImportCompareMapFromSchematicNetlist rejects invalid JSON payloads', () => {
+	assert.throws(
+		() => buildEmptyPcbImportCompareMapFromSchematicNetlist('not-json'),
+		/Could not parse EasyEDA schematic netlist JSON/,
+	);
 });
 
 test('getOpenDocumentBootstrapFailure reports a fast-fail error for tab_page1 bootstrap shells', () => {
