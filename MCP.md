@@ -49,6 +49,7 @@ The MCP server also exposes a local Streamable HTTP endpoint for attach-style te
 - `save_active_document`
 - `create_board`
 - `create_pcb`
+- `import_schematic_to_pcb`
 - `create_panel`
 - `create_schematic`
 - `create_schematic_page`
@@ -136,6 +137,8 @@ Recommended flow:
 3. Call `set_document_source` with the returned `sourceHash` as `expectedSourceHash`.
 4. If the hash mismatches, re-read the document before retrying.
 
+The MCP tool layer now verifies `set_document_source` by rereading the active document after both normal responses and timeout-recovery paths. If EasyEDA reports success but the reread source hash does not match the requested source, the tool returns an error instead of a false success.
+
 Example request payload:
 
 ```
@@ -165,6 +168,8 @@ These tools are intended for bridge verification rather than CAD editing:
 - `ping_bridge`: verify MCP server -> websocket bridge -> EasyEDA extension -> websocket bridge -> MCP server round-trip health
 - `echo_bridge`: send a message through the same path and verify the returned payload
 
+`get_capabilities` returns both the full bridge surface and the subset currently supported by the live EasyEDA host runtime. On host builds missing schematic net-label APIs, `supportedMethods` excludes the affected net-label methods and `hostRuntimeUnsupportedMethods` plus `hostRuntimeCapabilities` describe the limitation and suggested fallbacks.
+
 `bridge_status` and `get_current_context` also include `recommendedNextSteps` in their structured responses so MCP clients can choose the next tool with less guesswork.
 
 ## Higher-Level Edit Tools
@@ -174,7 +179,7 @@ These tools avoid whole-document source replacement for common edit cases:
 - `add_schematic_text`: add a text primitive to the active schematic page
 - `add_schematic_net_label`: add a net label to the active schematic page
 - `add_schematic_wire`: add a wire primitive to the active schematic page
-- `add_pcb_line`: add a line primitive to the active PCB document
+- `add_pcb_line`: add a line primitive to the active PCB document. Signal lines require a non-empty `net`; board outline lines on `BoardOutLine` may omit `net` or use an empty string.
 - `add_pcb_text`: add a text primitive to the active PCB document
 - `save_active_document`: save the active schematic page, PCB, or panel
 
@@ -192,6 +197,7 @@ The bridge now covers the main project object lifecycle:
 
 - `create_board`: create a board, optionally linking an existing schematic UUID and PCB UUID
 - `create_pcb`: create a PCB, optionally under a named board
+- `import_schematic_to_pcb`: import linked schematic changes into a PCB and fail if EasyEDA reports success without mutating an unchanged empty PCB
 - `create_panel`: create a panel document
 - `create_schematic`: create a schematic, optionally under a named board
 - `create_schematic_page`: add a new page to an existing schematic
@@ -213,17 +219,17 @@ The bridge now supports a fuller component and inspection workflow:
 
 - `search_library_devices`: search the EasyEDA library by keyword or LCSC part number(s)
 - `add_schematic_component`: place a searched library device onto the active schematic page
-- `add_pcb_component`: place a searched library device onto the active PCB document
+- `add_pcb_component`: place a searched library device onto the active PCB document, recovering the created primitive from live PCB state when some host builds throw after creation
 - `modify_schematic_component` and `modify_pcb_component`: adjust placed component properties such as coordinates, rotation, designator, and metadata
-- `delete_schematic_component` and `delete_pcb_component`: remove placed components with native EasyEDA confirmation dialogs
+- `delete_schematic_component` and `delete_pcb_component`: remove placed components with native EasyEDA confirmation dialogs; the MCP tool layer rereads PCB component inventory after delete and treats host-side no-op acknowledgements as failures instead of reporting false success
 - `delete_*` tools: accept `skipConfirmation: true` to suppress the bridge-side delete prompt
 - `add_schematic_net_flag` and `add_schematic_net_port`: place common net-aware schematic marker components without editing whole source text
 - `add_schematic_short_circuit_flag`: place the EasyEDA short-circuit marker component without editing whole source text
 - `list_schematic_component_pins`: inspect resolved symbol pins, including coordinates and pin numbers
 - `set_schematic_pin_no_connect`: toggle a pin's explicit no-connect marker
-- `connect_schematic_pin_to_net`: attach a net label at a chosen component pin location
-- `connect_schematic_pins_to_nets`: attach multiple explicit pin-to-net mappings in one request
-- `connect_schematic_pins_with_prefix`: derive net names like `BUS_1`, `BUS_2`, and so on from a prefix and pin numbers
+- `connect_schematic_pin_to_net`: attach a named net at a chosen component pin location, preferring a net label and falling back to a short wire stub when needed
+- `connect_schematic_pins_to_nets`: attach multiple explicit pin-to-net mappings in one request, preferring net labels and falling back to short wire stubs when needed
+- `connect_schematic_pins_with_prefix`: derive net names like `BUS_1`, `BUS_2`, and so on from a prefix and pin numbers, preferring net labels and falling back to short wire stubs when needed
 - `list_schematic_primitive_ids` and `list_pcb_primitive_ids`: enumerate supported primitive IDs by family
 - `get_schematic_primitive` and `get_pcb_primitive`: read the full primitive payload for a specific ID
 - `get_schematic_primitives_bbox` and `get_pcb_primitives_bbox`: compute combined BBoxes for selected primitive IDs
@@ -253,7 +259,7 @@ Recommended explicit bulk-net flow:
 
 1. Call `list_schematic_component_pins` for a placed component.
 2. Build a `connections` array of `{ "pinNumber": ..., "net": ... }` objects.
-3. Call `connect_schematic_pins_to_nets` to place all requested net labels in one request.
+3. Call `connect_schematic_pins_to_nets` to attach all requested named nets in one request.
 
 Recommended pad-to-pad route flow:
 
@@ -278,7 +284,11 @@ The PCB tool surface now includes:
 
 SDK limitation: schematic net labels are implemented as attribute primitives, and the EasyEDA Pro API does not expose attribute deletion. The bridge therefore supports `modify_schematic_net_label` but not delete for that primitive type.
 
-Host compatibility limitation: some EasyEDA builds do not expose the `sch_PrimitiveAttribute` runtime API even though it exists in the published type definitions. On those builds, `add_schematic_net_label`, `connect_schematic_pin_to_net`, `connect_schematic_pins_to_nets`, `connect_schematic_pins_with_prefix`, and `modify_schematic_net_label` will return a compatibility error instead of creating or editing net labels.
+Host compatibility limitation: some EasyEDA builds do not expose the `sch_PrimitiveAttribute` runtime API even though it exists in the published type definitions. On those builds, `add_schematic_net_label` and `modify_schematic_net_label` are reported as runtime-unsupported in `get_capabilities`, and direct calls return a compatibility error that points back to the live capability report. `connect_schematic_pin_to_net`, `connect_schematic_pins_to_nets`, and `connect_schematic_pins_with_prefix` still fall back to short net-assigned wire stubs so pin-level net attachment can succeed.
+
+Host placement limitation: some EasyEDA builds can throw `Cannot convert undefined or null to object` from `add_pcb_component` even after successfully creating the component. The bridge now snapshots component primitive IDs before placement and recovers the newly created primitive from live PCB state when that false-negative pattern occurs.
+
+Host PCB text limitation: some EasyEDA builds can leave `pcb_PrimitiveString` calls hanging instead of resolving or rejecting. `add_pcb_text`, `modify_pcb_text`, `delete_pcb_text`, and `list_pcb_primitive_ids` with `family="text"` now fail fast with a compatibility error when the host text API stops responding, instead of waiting for the full MCP bridge timeout.
 
 Routing limitation: the current SDK surface exposed here supports creating PCB line segments and inspecting connected pads, but it does not expose a true interactive autorouter API for arbitrary multi-segment pathfinding from the extension bridge. `route_pcb_line_between_component_pads` therefore creates a direct segment between the resolved pad centers, while `route_pcb_lines_between_component_pads` follows caller-supplied waypoints rather than performing automatic obstacle-aware routing.
 

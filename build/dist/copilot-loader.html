@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Copilot Loader</title>
+</head>
+<body>
+  <script>
+    (async () => {
+      try {
+        const response = await fetch('./index.js', { cache: 'no-store' });
+        const code = await response.text();
+        window.opener?.postMessage({ type: 'copilot-index-code', code }, '*');
+        document.body.textContent = `sent:${code.length}`;
+      }
+      catch (error) {
+        document.body.textContent = `error:${String(error)}`;
+      }
+    })();
+  </script>
+</body>
+</html>
