@@ -1,7 +1,7 @@
+import type { BridgeHeaderMenuDocumentLike } from './bridge-header-menus';
 import type { BridgeMethod, BridgeRequestEnvelope } from './mcp-bridge-protocol';
 
 import { shouldSyncBridgeHeaderMenus, syncBridgeHeaderMenus } from './bridge-header-menus';
-import type { BridgeHeaderMenuDocumentLike } from './bridge-header-menus';
 import { getSchematicNetLabelCapabilitySummary } from './bridge-runtime-capabilities';
 import { allocateBridgeSocketId, shouldHandleBridgeSocketCallback } from './bridge-socket-lifecycle';
 import { describeEditorBootstrapState, getOpenDocumentBootstrapFailure, getRuntimeLocationHash, inferCurrentDocumentFromEditorShell } from './editor-bootstrap-state';
@@ -23,7 +23,7 @@ import { getOptionalTrimmedStringIncludingEmpty, resolvePcbLineNetForCreate } fr
 import { findResolvedPcbPad } from './pcb-pad-geometry';
 import { buildPcbPolylineSource } from './pcb-polyline';
 import { findAddedPrimitiveIds } from './primitive-id-diff';
-import { getImportReadbackStatus, verifyCreatedBoard, verifyCreatedPcb } from './project-readback-guards';
+import { getImportReadbackStatus, verifyCreatedBoard, verifyCreatedPcb, verifyPcbImportTarget } from './project-readback-guards';
 import { buildSchematicPinStubLine } from './schematic-pin-stub';
 
 interface BridgeState {
@@ -64,7 +64,7 @@ let bridgeWatchdogLastReconnectAt = 0;
 export async function startEasyedaMcpBridge(forceReconnect = false): Promise<void> {
 	hydratePersistedBridgeState();
 	bridgeState.endpoint = getBridgeEndpoint();
- ensureBridgeWatchdog();
+	ensureBridgeWatchdog();
 	await ensureBridgeHeaderMenus();
 	if (bridgeRuntimeStarted && !forceReconnect)
 		return;
@@ -149,23 +149,23 @@ export async function reconnectEasyedaMcpBridge(): Promise<void> {
 }
 
 export function shouldAttemptBridgeWatchdogReconnect(
- state: Pick<BridgeState, 'started' | 'connected' | 'lastAttemptAt'>,
- currentDocument?: BridgeHeaderMenuDocumentLike | null,
- now = Date.now(),
- lastWatchdogReconnectAt = 0,
+	state: Pick<BridgeState, 'started' | 'connected' | 'lastAttemptAt'>,
+	currentDocument?: BridgeHeaderMenuDocumentLike | null,
+	now = Date.now(),
+	lastWatchdogReconnectAt = 0,
 ): boolean {
- const bridgeMenuMissing = shouldSyncBridgeHeaderMenus(currentDocument);
- if (!state.started)
-  return bridgeMenuMissing;
+	const bridgeMenuMissing = shouldSyncBridgeHeaderMenus(currentDocument);
+	if (!state.started)
+		return bridgeMenuMissing;
 
- if (!bridgeMenuMissing && state.connected)
-  return false;
+	if (!bridgeMenuMissing && state.connected)
+		return false;
 
- const lastReconnectAttemptAt = Math.max(
-  typeof state.lastAttemptAt === 'number' ? state.lastAttemptAt : 0,
-  lastWatchdogReconnectAt,
- );
- return now - lastReconnectAttemptAt >= BRIDGE_WATCHDOG_RECONNECT_COOLDOWN_MS;
+	const lastReconnectAttemptAt = Math.max(
+		typeof state.lastAttemptAt === 'number' ? state.lastAttemptAt : 0,
+		lastWatchdogReconnectAt,
+	);
+	return now - lastReconnectAttemptAt >= BRIDGE_WATCHDOG_RECONNECT_COOLDOWN_MS;
 }
 
 export async function probeEasyedaMcpBridge(): Promise<void> {
@@ -235,38 +235,38 @@ async function ensureBridgeHeaderMenus(): Promise<void> {
 	}
 }
 
-	function ensureBridgeWatchdog(): void {
-	 if (bridgeWatchdogTimer)
-	  return;
+function ensureBridgeWatchdog(): void {
+	if (bridgeWatchdogTimer)
+		return;
 
-	 bridgeWatchdogTimer = setInterval(() => {
-	  void runBridgeWatchdog();
-	 }, BRIDGE_WATCHDOG_INTERVAL_MS);
+	bridgeWatchdogTimer = setInterval(() => {
+		void runBridgeWatchdog();
+	}, BRIDGE_WATCHDOG_INTERVAL_MS);
+}
+
+async function runBridgeWatchdog(): Promise<void> {
+	if (bridgeWatchdogInFlight)
+		return;
+
+	bridgeWatchdogInFlight = true;
+	try {
+		const bridgeMenuMissing = shouldSyncBridgeHeaderMenus(globalThis.document);
+		if (bridgeMenuMissing)
+			await ensureBridgeHeaderMenus();
+
+		if (!shouldAttemptBridgeWatchdogReconnect(bridgeState, globalThis.document, Date.now(), bridgeWatchdogLastReconnectAt))
+			return;
+
+		bridgeWatchdogLastReconnectAt = Date.now();
+		await startEasyedaMcpBridge(true);
 	}
-
-	async function runBridgeWatchdog(): Promise<void> {
-	 if (bridgeWatchdogInFlight)
-	  return;
-
-	 bridgeWatchdogInFlight = true;
-	 try {
-	  const bridgeMenuMissing = shouldSyncBridgeHeaderMenus(globalThis.document);
-	  if (bridgeMenuMissing)
-	   await ensureBridgeHeaderMenus();
-
-	  if (!shouldAttemptBridgeWatchdogReconnect(bridgeState, globalThis.document, Date.now(), bridgeWatchdogLastReconnectAt))
-	   return;
-
-	  bridgeWatchdogLastReconnectAt = Date.now();
-	  await startEasyedaMcpBridge(true);
-	 }
-	 catch (error: unknown) {
-	  logInfo(`MCP bridge watchdog recovery failed: ${toErrorMessage(error)}`);
-	 }
-	 finally {
-	  bridgeWatchdogInFlight = false;
-	 }
+	catch (error: unknown) {
+		logInfo(`MCP bridge watchdog recovery failed: ${toErrorMessage(error)}`);
 	}
+	finally {
+		bridgeWatchdogInFlight = false;
+	}
+}
 
 async function handleSocketMessage(rawMessage: string): Promise<void> {
 	const envelope = parseBridgeEnvelope(rawMessage);
@@ -641,6 +641,12 @@ async function importSchematicToPcb(params: Record<string, unknown>): Promise<Re
 	const pcbUuid = getRequiredString(params.pcbUuid, 'pcbUuid');
 	const saveAfter = getOptionalBoolean(params.saveAfter);
 	const allowEmptyResult = getOptionalBoolean(params.allowEmptyResult) === true;
+	const projectInventory = await getVerifiedProjectInventory();
+	const { parentBoardName, schematicUuid, titleBlockBoardName, readbackVerified: importTargetReadbackVerified } = verifyPcbImportTarget(
+		projectInventory.boards,
+		projectInventory.pcbs,
+		pcbUuid,
+	);
 	await openPcbDocumentIfNeeded(pcbUuid);
 	const beforeSource = (await eda.sys_FileManager.getDocumentSource()) ?? '';
 	const imported = await eda.pcb_Document.importChanges(pcbUuid);
@@ -654,12 +660,16 @@ async function importSchematicToPcb(params: Record<string, unknown>): Promise<Re
 
 	if (imported && !readbackVerified) {
 		throw new Error(
-			`EasyEDA reported schematic import success for PCB ${pcbUuid}, but readback stayed empty and unchanged. The host likely ignored pcb_Document.importChanges(${pcbUuid}).`,
+			`EasyEDA reported schematic import success for PCB ${pcbUuid}, but readback stayed empty and unchanged even though PCB ${pcbUuid} is linked to board ${parentBoardName} and schematic ${schematicUuid}. The host likely ignored pcb_Document.importChanges(${pcbUuid}).`,
 		);
 	}
 
 	return {
 		pcbUuid,
+		parentBoardName,
+		schematicUuid,
+		titleBlockBoardName,
+		importTargetReadbackVerified,
 		imported,
 		saved,
 		allowEmptyResult,

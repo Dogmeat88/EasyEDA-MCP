@@ -195,9 +195,9 @@ Delete tools also accept `skipConfirmation: true` to suppress the bridge-side co
 
 The bridge now covers the main project object lifecycle:
 
-- `create_board`: create a board, optionally linking an existing schematic UUID and PCB UUID
+- `create_board`: create a board, optionally linking an existing schematic UUID and PCB UUID; fail if readback shows the linked schematic still advertises a different board name in its title block
 - `create_pcb`: create a PCB, optionally under a named board
-- `import_schematic_to_pcb`: import linked schematic changes into a PCB and fail if EasyEDA reports success without mutating an unchanged empty PCB
+- `import_schematic_to_pcb`: import linked schematic changes into a PCB; fail fast when the target PCB is not coherently linked to a board-backed schematic, and fail if EasyEDA reports success without mutating an unchanged empty PCB
 - `create_panel`: create a panel document
 - `create_schematic`: create a schematic, optionally under a named board
 - `create_schematic_page`: add a new page to an existing schematic

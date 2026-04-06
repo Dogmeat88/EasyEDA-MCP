@@ -39,6 +39,7 @@ export function verifyCreatedBoard(
 ): {
 	actualSchematicUuid?: string;
 	actualPcbUuid?: string;
+	titleBlockBoardName?: string;
 	readbackVerified: true;
 } {
 	const board = findProjectBoardByName(projectBoards, boardName);
@@ -59,9 +60,67 @@ export function verifyCreatedBoard(
 		);
 	}
 
+	const titleBlockBoardName = getProjectBoardSchematicTitleBlockBoardName(board);
+	if (expectedSchematicUuid && titleBlockBoardName && titleBlockBoardName !== boardName) {
+		throw new Error(
+			`EasyEDA created board ${boardName}, but the linked schematic still advertises board ${titleBlockBoardName} in its title block`,
+		);
+	}
+
 	return {
 		actualSchematicUuid,
 		actualPcbUuid,
+		titleBlockBoardName,
+		readbackVerified: true,
+	};
+}
+
+export function verifyPcbImportTarget(
+	projectBoards: unknown[],
+	projectPcbs: unknown[],
+	pcbUuid: string,
+): {
+	parentBoardName: string;
+	schematicUuid: string;
+	titleBlockBoardName?: string;
+	readbackVerified: true;
+} {
+	const pcb = findProjectPcbByUuid(projectPcbs, pcbUuid);
+	if (!pcb)
+		throw new Error(`import_schematic_to_pcb could not find PCB ${pcbUuid} in project inventory`);
+
+	const parentBoardName = getProjectPcbParentBoardName(pcb);
+	if (!parentBoardName) {
+		throw new Error(
+			`import_schematic_to_pcb requires PCB ${pcbUuid} to belong to a board linked to a schematic, but readback shows no parent board`,
+		);
+	}
+
+	const board = findProjectBoardByName(projectBoards, parentBoardName);
+	if (!board) {
+		throw new Error(
+			`import_schematic_to_pcb requires PCB ${pcbUuid} to belong to a board linked to a schematic, but board ${parentBoardName} is missing from project inventory`,
+		);
+	}
+
+	const schematicUuid = getProjectBoardSchematicUuid(board);
+	if (!schematicUuid) {
+		throw new Error(
+			`import_schematic_to_pcb requires PCB ${pcbUuid} to belong to a board linked to a schematic, but board ${parentBoardName} has no linked schematic`,
+		);
+	}
+
+	const titleBlockBoardName = getProjectBoardSchematicTitleBlockBoardName(board);
+	if (titleBlockBoardName && titleBlockBoardName !== parentBoardName) {
+		throw new Error(
+			`import_schematic_to_pcb requires a coherent board/schematic link, but board ${parentBoardName} is backed by a schematic whose title block still advertises board ${titleBlockBoardName}`,
+		);
+	}
+
+	return {
+		parentBoardName,
+		schematicUuid,
+		titleBlockBoardName,
 		readbackVerified: true,
 	};
 }
@@ -158,6 +217,20 @@ function getProjectBoardPcbUuid(board: Record<string, unknown>): string | undefi
 	]);
 }
 
+function getProjectBoardSchematicTitleBlockBoardName(board: Record<string, unknown>): string | undefined {
+	const schematic = isRecord(board.schematic) ? board.schematic : undefined;
+	const pages = Array.isArray(schematic?.page) ? schematic.page : [];
+
+	for (const entry of pages) {
+		const page = isRecord(entry) ? entry : undefined;
+		const titleBlockBoardName = getTitleBlockValue(page?.titleBlockData, '@Board Name');
+		if (titleBlockBoardName)
+			return titleBlockBoardName;
+	}
+
+	return undefined;
+}
+
 function getProjectPcbParentBoardName(pcb: Record<string, unknown>): string | undefined {
 	return getNestedTrimmedString(pcb, [
 		['parentBoardName'],
@@ -197,6 +270,12 @@ function getFirstTrimmedString(record: Record<string, unknown>, keys: string[]):
 	}
 
 	return undefined;
+}
+
+function getTitleBlockValue(titleBlockData: unknown, key: string): string | undefined {
+	const titleBlockRecord = isRecord(titleBlockData) ? titleBlockData : undefined;
+	const entry = isRecord(titleBlockRecord?.[key]) ? titleBlockRecord[key] as Record<string, unknown> : undefined;
+	return getOptionalString(entry?.value);
 }
 
 function parseSourceLine(line: string): unknown[] | undefined {

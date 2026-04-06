@@ -2,16 +2,16 @@ import { strict as assert } from 'node:assert';
 import test from 'node:test';
 
 import { shouldSyncBridgeHeaderMenus, syncBridgeHeaderMenus } from '../src/bridge-header-menus';
-import { shouldAttemptBridgeWatchdogReconnect } from '../src/easyeda-mcp-bridge';
 import { getSchematicNetLabelCapabilitySummary } from '../src/bridge-runtime-capabilities';
 import { allocateBridgeSocketId, shouldHandleBridgeSocketCallback } from '../src/bridge-socket-lifecycle';
+import { shouldAttemptBridgeWatchdogReconnect } from '../src/easyeda-mcp-bridge';
 import { describeEditorBootstrapState, getOpenDocumentBootstrapFailure, getRuntimeLocationHash, inferCurrentDocumentFromEditorShell } from '../src/editor-bootstrap-state';
 import { EXTENSION_VERSION } from '../src/extension-metadata';
 import { withHostMethodTimeout } from '../src/host-method-timeout';
 import { computeSourceRevision } from '../src/mcp-bridge-protocol';
 import { getOptionalTrimmedStringIncludingEmpty, resolvePcbLineNetForCreate } from '../src/pcb-line-net';
 import { findAddedPrimitiveIds } from '../src/primitive-id-diff';
-import { getImportReadbackStatus, verifyCreatedBoard, verifyCreatedPcb } from '../src/project-readback-guards';
+import { getImportReadbackStatus, verifyCreatedBoard, verifyCreatedPcb, verifyPcbImportTarget } from '../src/project-readback-guards';
 import { buildSchematicPinStubLine } from '../src/schematic-pin-stub';
 
 function createPin(x: number, y: number, rotation: number, pinLength = 10) {
@@ -260,14 +260,85 @@ test('verifyCreatedBoard confirms linked schematic and PCB uuids from project in
 	const result = verifyCreatedBoard([
 		{
 			boardName: 'Board1_3',
-			schematic: { uuid: 'sch-1' },
+			schematic: {
+				uuid: 'sch-1',
+				page: [{ titleBlockData: { '@Board Name': { value: 'Board1_3' } } }],
+			},
 			pcb: { uuid: 'pcb-1' },
 		},
 	], 'Board1_3', 'sch-1', 'pcb-1');
 
 	assert.equal(result.actualSchematicUuid, 'sch-1');
 	assert.equal(result.actualPcbUuid, 'pcb-1');
+	assert.equal(result.titleBlockBoardName, 'Board1_3');
 	assert.equal(result.readbackVerified, true);
+});
+
+test('verifyCreatedBoard fails when the linked schematic title block still advertises a different board name', () => {
+	assert.throws(
+		() => verifyCreatedBoard([
+			{
+				boardName: 'Board1_3',
+				schematic: {
+					uuid: 'sch-1',
+					page: [{ titleBlockData: { '@Board Name': { value: 'Board1' } } }],
+				},
+				pcb: { uuid: 'pcb-1' },
+			},
+		], 'Board1_3', 'sch-1', 'pcb-1'),
+		/title block still advertises board Board1/,
+	);
+});
+
+test('verifyPcbImportTarget confirms a coherent linked board and schematic for pcb import', () => {
+	const result = verifyPcbImportTarget(
+		[
+			{
+				name: 'Board1_1',
+				schematic: {
+					uuid: 'sch-1',
+					page: [{ titleBlockData: { '@Board Name': { value: 'Board1_1' } } }],
+				},
+			},
+		],
+		[{ uuid: 'pcb-1', parentBoardName: 'Board1_1' }],
+		'pcb-1',
+	);
+
+	assert.equal(result.parentBoardName, 'Board1_1');
+	assert.equal(result.schematicUuid, 'sch-1');
+	assert.equal(result.titleBlockBoardName, 'Board1_1');
+	assert.equal(result.readbackVerified, true);
+});
+
+test('verifyPcbImportTarget fails when the pcb belongs to a board without a linked schematic', () => {
+	assert.throws(
+		() => verifyPcbImportTarget(
+			[{ name: 'Board1' }],
+			[{ uuid: 'pcb-1', parentBoardName: 'Board1' }],
+			'pcb-1',
+		),
+		/board Board1 has no linked schematic/,
+	);
+});
+
+test('verifyPcbImportTarget fails when the linked schematic title block still points at a different board', () => {
+	assert.throws(
+		() => verifyPcbImportTarget(
+			[
+				{
+					name: 'Board1_1',
+					schematic: {
+						uuid: 'sch-1',
+						page: [{ titleBlockData: { '@Board Name': { value: 'Board1' } } }],
+					},
+				},
+			],
+			[{ uuid: 'pcb-1', parentBoardName: 'Board1_1' }],
+			'pcb-1',
+		),
+		/title block still advertises board Board1/,
+	);
 });
 
 test('getImportReadbackStatus fails verification when PCB source stays empty and unchanged', () => {
