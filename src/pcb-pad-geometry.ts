@@ -1,16 +1,16 @@
-type PcbComponentPadReference = {
+interface PcbComponentPadReference {
 	primitiveId?: unknown;
 	padNumber?: unknown;
-};
+}
 
-type PcbComponentWithPads = {
+interface PcbComponentWithPads {
 	pads?: unknown;
-};
+}
 
-type PcbPadStateLike = {
-	getState_PrimitiveId(): string;
-	getState_PadNumber(): string;
-};
+interface PcbPadStateLike {
+	getState_PrimitiveId: () => string;
+	getState_PadNumber: () => string;
+}
 
 function asPadReference(value: unknown): PcbComponentPadReference | undefined {
 	if (!value || typeof value !== 'object')

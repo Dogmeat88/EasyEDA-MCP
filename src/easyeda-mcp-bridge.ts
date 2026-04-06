@@ -17,9 +17,9 @@ import {
 	parseBridgeEnvelope,
 	serializeBridgeEnvelope,
 } from './mcp-bridge-protocol';
-import { findResolvedPcbPad } from './pcb-pad-geometry';
 import { normalizePcbLineLayerForHost } from './pcb-layer';
 import { getOptionalTrimmedStringIncludingEmpty, resolvePcbLineNetForCreate } from './pcb-line-net';
+import { findResolvedPcbPad } from './pcb-pad-geometry';
 import { buildPcbPolylineSource } from './pcb-polyline';
 import { findAddedPrimitiveIds } from './primitive-id-diff';
 import { getImportReadbackStatus, verifyCreatedBoard, verifyCreatedPcb } from './project-readback-guards';

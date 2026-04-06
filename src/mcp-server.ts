@@ -14,6 +14,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { WebSocketServer } from 'ws';
 
 import { EasyedaBridgeSession } from './bridge-session';
+import { EXTENSION_VERSION } from './extension-metadata';
 import { DEFAULT_BRIDGE_PATH, DEFAULT_BRIDGE_PORT } from './mcp-bridge-protocol';
 import { registerEasyedaTools } from './mcp-tools';
 
@@ -84,7 +85,7 @@ function createMcpServer(): McpServer {
 	const server = new McpServer(
 		{
 			name: 'easyeda-mcp-server',
-			version: '0.1.0',
+			version: EXTENSION_VERSION,
 		},
 		{
 			instructions: [
