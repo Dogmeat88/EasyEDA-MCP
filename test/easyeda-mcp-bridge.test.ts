@@ -16,6 +16,7 @@ import { computeSourceRevision } from '../src/mcp-bridge-protocol';
 import { getOptionalTrimmedStringIncludingEmpty, resolvePcbLineNetForCreate } from '../src/pcb-line-net';
 import { findAddedPrimitiveIds } from '../src/primitive-id-diff';
 import {
+	assertPcbCreationTargetAvailable,
 	getImportReadbackStatus,
 	getPcbImportTargetSnapshot,
 	getSchematicTitleBlockAttributeFromSource,
@@ -279,10 +280,30 @@ test('verifyCreatedPcb confirms linked PCB creation from project inventory', () 
 	assert.equal(result.readbackVerified, true);
 });
 
+test('verifyCreatedPcb fails clearly when EasyEDA does not return a PCB id', () => {
+	assert.throws(
+		() => verifyCreatedPcb([], undefined, 'Board1_3'),
+		/did not return a PCB id/,
+	);
+});
+
 test('verifyCreatedPcb fails when EasyEDA returns an orphan PCB for a requested board name', () => {
 	assert.throws(
 		() => verifyCreatedPcb([{ uuid: 'pcb-1', parentBoardName: '' }], 'pcb-1', 'Board1_3'),
 		/parent board none instead of Board1_3/,
+	);
+});
+
+test('assertPcbCreationTargetAvailable rejects boards that already have a linked PCB', () => {
+	assert.throws(
+		() => assertPcbCreationTargetAvailable([{ boardName: 'Board1_3', pcb: { uuid: 'pcb-1' } }], 'Board1_3'),
+		/already linked to PCB pcb-1/,
+	);
+});
+
+test('assertPcbCreationTargetAvailable allows boards without a linked PCB', () => {
+	assert.doesNotThrow(
+		() => assertPcbCreationTargetAvailable([{ boardName: 'Board1_3', schematic: { uuid: 'sch-1' } }], 'Board1_3'),
 	);
 });
 

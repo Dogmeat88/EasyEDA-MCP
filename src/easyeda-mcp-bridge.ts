@@ -25,6 +25,7 @@ import { findResolvedPcbPad } from './pcb-pad-geometry';
 import { buildPcbPolylineSource } from './pcb-polyline';
 import { findAddedPrimitiveIds } from './primitive-id-diff';
 import {
+	assertPcbCreationTargetAvailable,
 	getImportReadbackStatus,
 	getPcbImportTargetSnapshot,
 	getSchematicTitleBlockAttributeFromSource,
@@ -620,6 +621,8 @@ async function saveActiveDocument(): Promise<Record<string, unknown>> {
 
 async function createPcb(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	const boardName = getOptionalString(params.boardName);
+	const projectInventoryBeforeCreate = await getVerifiedProjectInventory();
+	assertPcbCreationTargetAvailable(projectInventoryBeforeCreate.boards, boardName);
 	const pcbUuid = await eda.dmt_Pcb.createPcb(boardName);
 	const projectInventory = await getVerifiedProjectInventory();
 	const { parentBoardName, readbackVerified } = verifyCreatedPcb(projectInventory.pcbs, pcbUuid, boardName);
@@ -2023,8 +2026,8 @@ async function getSchematicPageTitleBlockAttribute(schematicPageUuid: string, at
 async function importEmptyPcbFromHostUi(pcbUuid: string): Promise<boolean> {
 	await openPcbDocumentIfNeeded(pcbUuid);
 	const shellWindow = getAccessibleEditorShellWindow();
-	const shellDocument = shellWindow?.document;
-	if (!shellWindow || !shellDocument)
+	const shellDocument = shellWindow?.document ?? globalThis.document;
+	if (!shellDocument)
 		throw new Error('This EasyEDA host does not expose the editor shell document, so the empty-PCB host-UI import fallback is unavailable.');
 
 	await openTopBarMenu(shellDocument, 'Design', 'mm-common-design');
@@ -2139,15 +2142,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function getAccessibleEditorShellWindow(): (Window & typeof globalThis) | undefined {
+	const globalWindow = typeof globalThis !== 'undefined' && 'window' in globalThis
+		? globalThis.window as (Window & typeof globalThis) | undefined
+		: undefined;
+	const documentWindow = globalThis.document?.defaultView as (Window & typeof globalThis) | null | undefined;
+
 	try {
-		if (typeof window !== 'undefined' && window.top)
-			return window.top;
+		if (globalWindow?.top)
+			return globalWindow.top;
+		if (documentWindow?.top)
+			return documentWindow.top;
 	}
 	catch {
 		// Ignore cross-window access issues and fall back to the local runtime window.
 	}
 
-	return typeof window !== 'undefined' ? window : undefined;
+	return globalWindow ?? documentWindow ?? undefined;
 }
 
 async function openTopBarMenu(doc: Document, menuTitle: string, expectedMenuId: string): Promise<void> {

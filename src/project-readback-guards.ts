@@ -19,10 +19,33 @@ export interface PcbImportTargetSnapshot {
 	titleBlockBoardName?: string;
 }
 
-export function verifyCreatedPcb(projectPcbs: unknown[], pcbUuid: string, expectedBoardName?: string): {
+export function assertPcbCreationTargetAvailable(projectBoards: unknown[], boardName?: string): void {
+	if (!boardName)
+		return;
+
+	const board = findProjectBoardByName(projectBoards, boardName);
+	if (!board)
+		return;
+
+	const existingPcbUuid = getProjectBoardPcbUuid(board);
+	if (existingPcbUuid) {
+		throw new Error(
+			`create_pcb cannot create another PCB for board ${boardName} because it is already linked to PCB ${existingPcbUuid}`,
+		);
+	}
+}
+
+export function verifyCreatedPcb(projectPcbs: unknown[], pcbUuid: string | undefined, expectedBoardName?: string): {
 	parentBoardName?: string;
 	readbackVerified: true;
 } {
+	if (!pcbUuid) {
+		if (expectedBoardName)
+			throw new Error(`EasyEDA reported PCB creation success for board ${expectedBoardName}, but did not return a PCB id`);
+
+		throw new Error('EasyEDA reported PCB creation success, but did not return a PCB id');
+	}
+
 	const pcb = findProjectPcbByUuid(projectPcbs, pcbUuid);
 	if (!pcb)
 		throw new Error(`EasyEDA reported PCB creation success for ${pcbUuid}, but the PCB is missing from project inventory`);
