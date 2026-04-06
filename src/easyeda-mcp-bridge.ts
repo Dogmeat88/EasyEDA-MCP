@@ -18,7 +18,9 @@ import {
 	serializeBridgeEnvelope,
 } from './mcp-bridge-protocol';
 import { findResolvedPcbPad } from './pcb-pad-geometry';
+import { normalizePcbLineLayerForHost } from './pcb-layer';
 import { getOptionalTrimmedStringIncludingEmpty, resolvePcbLineNetForCreate } from './pcb-line-net';
+import { buildPcbPolylineSource } from './pcb-polyline';
 import { findAddedPrimitiveIds } from './primitive-id-diff';
 import { getImportReadbackStatus, verifyCreatedBoard, verifyCreatedPcb } from './project-readback-guards';
 import { buildSchematicPinStubLine } from './schematic-pin-stub';
@@ -1132,18 +1134,14 @@ async function routePcbLinesBetweenComponentPads(params: Record<string, unknown>
 		...waypoints,
 		{ x: toPad.getState_X(), y: toPad.getState_Y() },
 	];
-	const primitives: unknown[] = [];
-
-	for (let index = 0; index < points.length - 1; index += 1) {
-		primitives.push(await createPcbLineSegment(
-			net,
-			layer,
-			points[index],
-			points[index + 1],
-			getOptionalNumber(params.lineWidth),
-			getOptionalBoolean(params.primitiveLock),
-		));
-	}
+	const hostLayer = normalizePcbLineLayerForHost(layer) as TPCB_LayersOfLine;
+	const polyline = await eda.pcb_PrimitivePolyline.create(
+		net,
+		hostLayer,
+		eda.pcb_MathPolygon.createPolygon(buildPcbPolylineSource(points)),
+		getOptionalNumber(params.lineWidth),
+		getOptionalBoolean(params.primitiveLock),
+	);
 
 	const saved = await savePcbDocumentIfRequested(currentDocument.uuid, getOptionalBoolean(params.saveAfter));
 	return {
@@ -1152,8 +1150,9 @@ async function routePcbLinesBetweenComponentPads(params: Record<string, unknown>
 		layer,
 		net,
 		waypoints,
-		segmentCount: primitives.length,
-		primitives,
+		segmentCount: points.length - 1,
+		primitives: polyline ? [polyline] : [],
+		polyline,
 		saved,
 	};
 }
@@ -1234,13 +1233,14 @@ async function addPcbLine(params: Record<string, unknown>): Promise<Record<strin
 	const currentDocument = await requireCurrentDocument();
 	const layer = getRequiredString(params.layer, 'layer') as TPCB_LayersOfLine;
 	const net = resolvePcbLineNetForCreate(layer, params.net);
+	const hostLayer = normalizePcbLineLayerForHost(layer) as TPCB_LayersOfLine;
 	const startX = getRequiredNumber(params.startX, 'startX');
 	const startY = getRequiredNumber(params.startY, 'startY');
 	const endX = getRequiredNumber(params.endX, 'endX');
 	const endY = getRequiredNumber(params.endY, 'endY');
 	const primitive = await eda.pcb_PrimitiveLine.create(
 		net,
-		layer,
+		hostLayer,
 		startX,
 		startY,
 		endX,
@@ -1477,9 +1477,10 @@ async function deleteSchematicWire(params: Record<string, unknown>): Promise<Rec
 async function modifyPcbLine(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	const currentDocument = await requireCurrentDocumentType(EDMT_EditorDocumentType.PCB, 'PCB document required for PCB line');
 	const primitiveId = getRequiredString(params.primitiveId, 'primitiveId');
+	const layer = getOptionalString(params.layer);
 	const primitive = await eda.pcb_PrimitiveLine.modify(primitiveId, {
 		net: getOptionalTrimmedStringIncludingEmpty(params.net),
-		layer: getOptionalString(params.layer) as TPCB_LayersOfLine | undefined,
+		layer: layer === undefined ? undefined : normalizePcbLineLayerForHost(layer) as TPCB_LayersOfLine,
 		startX: getOptionalNumber(params.startX),
 		startY: getOptionalNumber(params.startY),
 		endX: getOptionalNumber(params.endX),
@@ -2341,9 +2342,11 @@ async function createPcbLineSegment(
 	lineWidth?: number,
 	primitiveLock?: boolean,
 ): Promise<unknown> {
+	const hostLayer = normalizePcbLineLayerForHost(layer) as TPCB_LayersOfLine;
+
 	return eda.pcb_PrimitiveLine.create(
 		net,
-		layer,
+		hostLayer,
 		start.x,
 		start.y,
 		end.x,
