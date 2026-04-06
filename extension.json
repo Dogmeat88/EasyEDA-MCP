@@ -44,6 +44,24 @@
 				]
 			}
 		],
+		"blank": [
+			{
+				"id": "EasyEDA MCP Bridge",
+				"title": "EasyEDA MCP Bridge",
+				"menuItems": [
+					{
+						"id": "MCP Bridge Reconnect",
+						"title": "Reconnect",
+						"registerFn": "bridgeReconnect"
+					},
+					{
+						"id": "MCP Bridge Status",
+						"title": "Status",
+						"registerFn": "bridgeStatus"
+					}
+				]
+			}
+		],
 		"sch": [
 			{
 				"id": "EasyEDA MCP Bridge",

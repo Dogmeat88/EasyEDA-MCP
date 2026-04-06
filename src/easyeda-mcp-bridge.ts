@@ -1,6 +1,7 @@
 import type { BridgeMethod, BridgeRequestEnvelope } from './mcp-bridge-protocol';
 
-import { syncBridgeHeaderMenus } from './bridge-header-menus';
+import { shouldSyncBridgeHeaderMenus, syncBridgeHeaderMenus } from './bridge-header-menus';
+import type { BridgeHeaderMenuDocumentLike } from './bridge-header-menus';
 import { getSchematicNetLabelCapabilitySummary } from './bridge-runtime-capabilities';
 import { allocateBridgeSocketId, shouldHandleBridgeSocketCallback } from './bridge-socket-lifecycle';
 import { describeEditorBootstrapState, getOpenDocumentBootstrapFailure, getRuntimeLocationHash, inferCurrentDocumentFromEditorShell } from './editor-bootstrap-state';
@@ -53,10 +54,17 @@ let bridgeSocketSequence = 0;
 
 const PCB_TEXT_HOST_TIMEOUT_MS = 4_000;
 const PCB_TEXT_HOST_TIMEOUT_HINT = 'This EasyEDA host session is not responding to pcb_PrimitiveString APIs. PCB text tools are unavailable in this session. Try reopening the PCB document or restarting the EasyEDA extension host.';
+const BRIDGE_WATCHDOG_INTERVAL_MS = 5_000;
+const BRIDGE_WATCHDOG_RECONNECT_COOLDOWN_MS = 5_000;
+
+let bridgeWatchdogTimer: NodeJS.Timeout | undefined;
+let bridgeWatchdogInFlight = false;
+let bridgeWatchdogLastReconnectAt = 0;
 
 export async function startEasyedaMcpBridge(forceReconnect = false): Promise<void> {
 	hydratePersistedBridgeState();
 	bridgeState.endpoint = getBridgeEndpoint();
+ ensureBridgeWatchdog();
 	await ensureBridgeHeaderMenus();
 	if (bridgeRuntimeStarted && !forceReconnect)
 		return;
@@ -140,6 +148,26 @@ export async function reconnectEasyedaMcpBridge(): Promise<void> {
 	await startEasyedaMcpBridge(true);
 }
 
+export function shouldAttemptBridgeWatchdogReconnect(
+ state: Pick<BridgeState, 'started' | 'connected' | 'lastAttemptAt'>,
+ currentDocument?: BridgeHeaderMenuDocumentLike | null,
+ now = Date.now(),
+ lastWatchdogReconnectAt = 0,
+): boolean {
+ const bridgeMenuMissing = shouldSyncBridgeHeaderMenus(currentDocument);
+ if (!state.started)
+  return bridgeMenuMissing;
+
+ if (!bridgeMenuMissing && state.connected)
+  return false;
+
+ const lastReconnectAttemptAt = Math.max(
+  typeof state.lastAttemptAt === 'number' ? state.lastAttemptAt : 0,
+  lastWatchdogReconnectAt,
+ );
+ return now - lastReconnectAttemptAt >= BRIDGE_WATCHDOG_RECONNECT_COOLDOWN_MS;
+}
+
 export async function probeEasyedaMcpBridge(): Promise<void> {
 	await reconnectEasyedaMcpBridge();
 	setTimeout(() => {
@@ -206,6 +234,39 @@ async function ensureBridgeHeaderMenus(): Promise<void> {
 		logInfo(`MCP bridge header menu sync failed: ${toErrorMessage(error)}`);
 	}
 }
+
+	function ensureBridgeWatchdog(): void {
+	 if (bridgeWatchdogTimer)
+	  return;
+
+	 bridgeWatchdogTimer = setInterval(() => {
+	  void runBridgeWatchdog();
+	 }, BRIDGE_WATCHDOG_INTERVAL_MS);
+	}
+
+	async function runBridgeWatchdog(): Promise<void> {
+	 if (bridgeWatchdogInFlight)
+	  return;
+
+	 bridgeWatchdogInFlight = true;
+	 try {
+	  const bridgeMenuMissing = shouldSyncBridgeHeaderMenus(globalThis.document);
+	  if (bridgeMenuMissing)
+	   await ensureBridgeHeaderMenus();
+
+	  if (!shouldAttemptBridgeWatchdogReconnect(bridgeState, globalThis.document, Date.now(), bridgeWatchdogLastReconnectAt))
+	   return;
+
+	  bridgeWatchdogLastReconnectAt = Date.now();
+	  await startEasyedaMcpBridge(true);
+	 }
+	 catch (error: unknown) {
+	  logInfo(`MCP bridge watchdog recovery failed: ${toErrorMessage(error)}`);
+	 }
+	 finally {
+	  bridgeWatchdogInFlight = false;
+	 }
+	}
 
 async function handleSocketMessage(rawMessage: string): Promise<void> {
 	const envelope = parseBridgeEnvelope(rawMessage);

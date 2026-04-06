@@ -2,6 +2,7 @@ import { strict as assert } from 'node:assert';
 import test from 'node:test';
 
 import { shouldSyncBridgeHeaderMenus, syncBridgeHeaderMenus } from '../src/bridge-header-menus';
+import { shouldAttemptBridgeWatchdogReconnect } from '../src/easyeda-mcp-bridge';
 import { getSchematicNetLabelCapabilitySummary } from '../src/bridge-runtime-capabilities';
 import { allocateBridgeSocketId, shouldHandleBridgeSocketCallback } from '../src/bridge-socket-lifecycle';
 import { describeEditorBootstrapState, getOpenDocumentBootstrapFailure, getRuntimeLocationHash, inferCurrentDocumentFromEditorShell } from '../src/editor-bootstrap-state';
@@ -181,6 +182,47 @@ test('shouldSyncBridgeHeaderMenus skips runtime replacement when the bridge menu
 	assert.equal(shouldSyncBridgeHeaderMenus({ body: { textContent: 'File\nSettings\nEasyEDA MCP Bridge\nHelp' } }), false);
 	assert.equal(shouldSyncBridgeHeaderMenus({ body: { textContent: 'File\nSettings\nHelp' } }), true);
 	assert.equal(shouldSyncBridgeHeaderMenus(undefined), true);
+});
+
+test('shouldAttemptBridgeWatchdogReconnect retries when a reload drops the bridge menu', () => {
+	assert.equal(
+		shouldAttemptBridgeWatchdogReconnect(
+			{ started: true, connected: true, lastAttemptAt: 0 },
+			{ body: { textContent: 'File\nSettings\nHelp' } },
+			6_000,
+			0,
+		),
+		true,
+	);
+
+	assert.equal(
+		shouldAttemptBridgeWatchdogReconnect(
+			{ started: true, connected: false, lastAttemptAt: 4_000 },
+			{ body: { textContent: 'File\nSettings\nHelp' } },
+			6_000,
+			0,
+		),
+		false,
+	);
+
+	assert.equal(
+		shouldAttemptBridgeWatchdogReconnect(
+			{ started: true, connected: true, lastAttemptAt: 0 },
+			{ body: { textContent: 'File\nSettings\nEasyEDA MCP Bridge\nHelp' } },
+			6_000,
+			0,
+		),
+		false,
+	);
+	assert.equal(
+		shouldAttemptBridgeWatchdogReconnect(
+			{ started: false, connected: false, lastAttemptAt: 0 },
+			{ body: { textContent: 'File\nSettings\nHelp' } },
+			6_000,
+			0,
+		),
+		true,
+	);
 });
 
 test('withHostMethodTimeout resolves when the host call completes in time', async () => {
