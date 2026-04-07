@@ -3,6 +3,7 @@
 		"incremental": true,
 		"target": "ESNext",
 		"lib": ["ESNext", "DOM"],
+		"types": ["node"],
 		"experimentalDecorators": true,
 		"module": "CommonJS",
 		"moduleResolution": "Node10",
@@ -25,5 +26,5 @@
 		"forceConsistentCasingInFileNames": true,
 		"isolatedModules": true
 	},
-	"include": ["./src/**/*", "./node_modules/@jlceda/pro-api-types/**/*"]
+	"include": ["./src/**/*", "./test/**/*", "./node_modules/@jlceda/pro-api-types/**/*"]
 }

@@ -246,7 +246,7 @@ export function showBridgeStatus(): void {
 
 async function ensureBridgeHeaderMenus(): Promise<void> {
 	try {
-		await syncBridgeHeaderMenus(eda.sys_HeaderMenu);
+		await syncBridgeHeaderMenus(eda.sys_HeaderMenu as unknown as import('./bridge-header-menus').BridgeHeaderMenuApi);
 	}
 	catch (error: unknown) {
 		logInfo(`MCP bridge header menu sync failed: ${toErrorMessage(error)}`);
@@ -638,7 +638,7 @@ async function createPcb(params: Record<string, unknown>): Promise<Record<string
 async function createBoard(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	const schematicUuid = getOptionalString(params.schematicUuid);
 	const pcbUuid = getOptionalString(params.pcbUuid);
-	const boardName = await eda.dmt_Board.createBoard(schematicUuid, pcbUuid);
+	const boardName = getRequiredString(await eda.dmt_Board.createBoard(schematicUuid, pcbUuid), 'boardName');
 	const projectInventory = await getVerifiedProjectInventory();
 	const { actualSchematicUuid, actualPcbUuid, readbackVerified } = verifyCreatedBoard(
 		projectInventory.boards,
@@ -1128,8 +1128,9 @@ async function listSchematicPrimitiveIds(params: Record<string, unknown>): Promi
 			primitiveIds = await eda.sch_PrimitiveWire.getAllPrimitiveId(getOptionalStringOrStringArray(params.net));
 			break;
 		case 'component':
+			// EasyEDA's ambient typings are narrower than the live runtime contract here.
 			primitiveIds = await eda.sch_PrimitiveComponent.getAllPrimitiveId(
-				getOptionalNumber(params.componentType) as ESCH_PrimitiveComponentType | undefined,
+				coerceOptionalHostValue<ESCH_PrimitiveComponentType>(getOptionalNumber(params.componentType)) as never,
 				getOptionalBoolean(params.allSchematicPages),
 			);
 			break;
@@ -1169,7 +1170,8 @@ async function getSchematicPrimitivesBBox(params: Record<string, unknown>): Prom
 async function addPcbComponent(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	const currentDocument = await requireCurrentDocumentType(EDMT_EditorDocumentType.PCB, 'PCB document required for PCB component placement');
 	const deviceReference = getRequiredDeviceReference(params);
-	const layer = getRequiredString(params.layer, 'layer') as TPCB_LayersOfComponent;
+	const layerName = getRequiredString(params.layer, 'layer');
+	const layer = coerceHostValue<TPCB_LayersOfComponent>(layerName);
 	const x = getRequiredNumber(params.x, 'x');
 	const y = getRequiredNumber(params.y, 'y');
 	const rotation = getOptionalNumber(params.rotation);
@@ -1268,7 +1270,8 @@ async function routePcbLineBetweenComponentPads(params: Record<string, unknown>)
 	const fromPadNumber = getRequiredString(params.fromPadNumber, 'fromPadNumber');
 	const toComponentPrimitiveId = getRequiredString(params.toComponentPrimitiveId, 'toComponentPrimitiveId');
 	const toPadNumber = getRequiredString(params.toPadNumber, 'toPadNumber');
-	const layer = getRequiredString(params.layer, 'layer') as TPCB_LayersOfLine;
+	const layerName = getRequiredString(params.layer, 'layer');
+	const layer = coerceHostValue<TPCB_LayersOfLine>(layerName);
 	const fromPad = await requirePcbPad(fromComponentPrimitiveId, fromPadNumber);
 	const toPad = await requirePcbPad(toComponentPrimitiveId, toPadNumber);
 	const net = getRouteNet(fromPad, toPad, getOptionalString(params.net));
@@ -1298,7 +1301,8 @@ async function routePcbLinesBetweenComponentPads(params: Record<string, unknown>
 	const fromPadNumber = getRequiredString(params.fromPadNumber, 'fromPadNumber');
 	const toComponentPrimitiveId = getRequiredString(params.toComponentPrimitiveId, 'toComponentPrimitiveId');
 	const toPadNumber = getRequiredString(params.toPadNumber, 'toPadNumber');
-	const layer = getRequiredString(params.layer, 'layer') as TPCB_LayersOfLine;
+	const layerName = getRequiredString(params.layer, 'layer');
+	const layer = coerceHostValue<TPCB_LayersOfLine>(layerName);
 	const fromPad = await requirePcbPad(fromComponentPrimitiveId, fromPadNumber);
 	const toPad = await requirePcbPad(toComponentPrimitiveId, toPadNumber);
 	const net = getRouteNet(fromPad, toPad, getOptionalString(params.net));
@@ -1308,11 +1312,15 @@ async function routePcbLinesBetweenComponentPads(params: Record<string, unknown>
 		...waypoints,
 		{ x: toPad.getState_X(), y: toPad.getState_Y() },
 	];
-	const hostLayer = normalizePcbLineLayerForHost(layer) as TPCB_LayersOfLine;
+	const hostLayer = coerceHostValue<TPCB_LayersOfLine>(normalizePcbLineLayerForHost(layerName));
+	const polygon = eda.pcb_MathPolygon.createPolygon(buildPcbPolylineSource(points));
+	if (!polygon)
+		throw new Error('EasyEDA failed to build the requested PCB polyline geometry');
+
 	const polyline = await eda.pcb_PrimitivePolyline.create(
 		net,
 		hostLayer,
-		eda.pcb_MathPolygon.createPolygon(buildPcbPolylineSource(points)),
+		polygon,
 		getOptionalNumber(params.lineWidth),
 		getOptionalBoolean(params.primitiveLock),
 	);
@@ -1354,7 +1362,7 @@ async function addSchematicWire(params: Record<string, unknown>): Promise<Record
 		getOptionalString(params.net),
 		getOptionalNullableString(params.color),
 		getOptionalNullableNumber(params.lineWidth),
-		getOptionalNumber(params.lineType) as ESCH_PrimitiveLineType | null | undefined,
+		coerceOptionalNullableHostValue<ESCH_PrimitiveLineType>(getOptionalNumber(params.lineType)),
 	);
 	const saved = getOptionalBoolean(params.saveAfter) ? await eda.sch_Document.save() : undefined;
 
@@ -1367,7 +1375,8 @@ async function addSchematicWire(params: Record<string, unknown>): Promise<Record
 async function addPcbText(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	await requireCurrentDocumentType(EDMT_EditorDocumentType.PCB, 'PCB document required for PCB text');
 	const currentDocument = await requireCurrentDocument();
-	const layer = getRequiredString(params.layer, 'layer') as TPCB_LayersOfImage;
+	const layerName = getRequiredString(params.layer, 'layer');
+	const layer = coerceHostValue<TPCB_LayersOfImage>(layerName);
 	const x = getRequiredNumber(params.x, 'x');
 	const y = getRequiredNumber(params.y, 'y');
 	const text = getRequiredString(params.text, 'text');
@@ -1385,7 +1394,7 @@ async function addPcbText(params: Record<string, unknown>): Promise<Record<strin
 			fontFamily,
 			fontSize,
 			lineWidth,
-			(getOptionalNumber(params.alignMode) ?? 4) as EPCB_PrimitiveStringAlignMode,
+			coerceHostValue<EPCB_PrimitiveStringAlignMode>(getOptionalNumber(params.alignMode) ?? 4),
 			getOptionalNumber(params.rotation) ?? 0,
 			getOptionalBoolean(params.reverse) ?? false,
 			getOptionalNumber(params.expansion) ?? 0,
@@ -1405,9 +1414,10 @@ async function addPcbText(params: Record<string, unknown>): Promise<Record<strin
 async function addPcbLine(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	await requireCurrentDocumentType(EDMT_EditorDocumentType.PCB, 'PCB document required for PCB line');
 	const currentDocument = await requireCurrentDocument();
-	const layer = getRequiredString(params.layer, 'layer') as TPCB_LayersOfLine;
-	const net = resolvePcbLineNetForCreate(layer, params.net);
-	const hostLayer = normalizePcbLineLayerForHost(layer) as TPCB_LayersOfLine;
+	const layerName = getRequiredString(params.layer, 'layer');
+	const layer = coerceHostValue<TPCB_LayersOfLine>(layerName);
+	const net = resolvePcbLineNetForCreate(layerName, params.net);
+	const hostLayer = coerceHostValue<TPCB_LayersOfLine>(normalizePcbLineLayerForHost(layerName));
 	const startX = getRequiredNumber(params.startX, 'startX');
 	const startY = getRequiredNumber(params.startY, 'startY');
 	const endX = getRequiredNumber(params.endX, 'endX');
@@ -1439,7 +1449,7 @@ async function listPcbPrimitiveIds(params: Record<string, unknown>): Promise<Rec
 		case 'line':
 			primitiveIds = await eda.pcb_PrimitiveLine.getAllPrimitiveId(
 				getOptionalString(params.net),
-				getOptionalString(params.layer) as TPCB_LayersOfLine | undefined,
+				coerceOptionalHostValue<TPCB_LayersOfLine>(getOptionalString(params.layer)),
 				getOptionalBoolean(params.primitiveLock),
 			);
 			break;
@@ -1448,7 +1458,7 @@ async function listPcbPrimitiveIds(params: Record<string, unknown>): Promise<Rec
 				'pcb_PrimitiveString.getAllPrimitiveId',
 				PCB_TEXT_HOST_TIMEOUT_MS,
 				() => eda.pcb_PrimitiveString.getAllPrimitiveId(
-					getOptionalString(params.layer) as TPCB_LayersOfImage | undefined,
+					coerceOptionalHostValue<TPCB_LayersOfImage>(getOptionalString(params.layer)),
 					getOptionalBoolean(params.primitiveLock),
 				),
 				PCB_TEXT_HOST_TIMEOUT_HINT,
@@ -1456,7 +1466,7 @@ async function listPcbPrimitiveIds(params: Record<string, unknown>): Promise<Rec
 			break;
 		case 'component':
 			primitiveIds = await eda.pcb_PrimitiveComponent.getAllPrimitiveId(
-				getOptionalString(params.layer) as TPCB_LayersOfComponent | undefined,
+				coerceOptionalHostValue<TPCB_LayersOfComponent>(getOptionalString(params.layer)),
 				getOptionalBoolean(params.primitiveLock),
 			);
 			break;
@@ -1538,7 +1548,7 @@ async function setPcbNetColor(params: Record<string, unknown>): Promise<Record<s
 async function getPcbNetPrimitives(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	await requireCurrentDocumentType(EDMT_EditorDocumentType.PCB, 'PCB document required for PCB net queries');
 	const net = getRequiredString(params.net, 'net');
-	const primitiveTypes = getOptionalNumberArray(params.primitiveTypes) as Array<EPCB_PrimitiveType> | undefined;
+	const primitiveTypes = coerceOptionalHostValue<Array<EPCB_PrimitiveType>>(getOptionalNumberArray(params.primitiveTypes));
 	const primitives = await eda.pcb_Net.getAllPrimitivesByNet(net, primitiveTypes);
 
 	return {
@@ -1562,7 +1572,7 @@ async function modifySchematicText(params: Record<string, unknown>): Promise<Rec
 		bold: getOptionalBoolean(params.bold),
 		italic: getOptionalBoolean(params.italic),
 		underLine: getOptionalBoolean(params.underLine),
-		alignMode: getOptionalNumber(params.alignMode) as ESCH_PrimitiveTextAlignMode | undefined,
+		alignMode: coerceOptionalHostValue<ESCH_PrimitiveTextAlignMode>(getOptionalNumber(params.alignMode)),
 	});
 	const saved = await saveSchematicDocumentIfRequested(getOptionalBoolean(params.saveAfter));
 
@@ -1600,7 +1610,7 @@ async function modifySchematicNetLabel(params: Record<string, unknown>): Promise
 		bold: getOptionalNullableBoolean(params.bold),
 		italic: getOptionalNullableBoolean(params.italic),
 		underLine: getOptionalNullableBoolean(params.underLine),
-		alignMode: getOptionalNullableNumber(params.alignMode) as ESCH_PrimitiveTextAlignMode | null | undefined,
+		alignMode: coerceOptionalNullableHostValue<ESCH_PrimitiveTextAlignMode>(getOptionalNullableNumber(params.alignMode)),
 		fillColor: getOptionalNullableString(params.fillColor),
 		value: getOptionalString(params.net),
 		keyVisible: getOptionalNullableBoolean(params.keyVisible),
@@ -1654,7 +1664,7 @@ async function modifyPcbLine(params: Record<string, unknown>): Promise<Record<st
 	const layer = getOptionalString(params.layer);
 	const primitive = await eda.pcb_PrimitiveLine.modify(primitiveId, {
 		net: getOptionalTrimmedStringIncludingEmpty(params.net),
-		layer: layer === undefined ? undefined : normalizePcbLineLayerForHost(layer) as TPCB_LayersOfLine,
+		layer: layer === undefined ? undefined : coerceHostValue<TPCB_LayersOfLine>(normalizePcbLineLayerForHost(layer)),
 		startX: getOptionalNumber(params.startX),
 		startY: getOptionalNumber(params.startY),
 		endX: getOptionalNumber(params.endX),
@@ -1692,14 +1702,14 @@ async function modifyPcbText(params: Record<string, unknown>): Promise<Record<st
 		'pcb_PrimitiveString.modify',
 		PCB_TEXT_HOST_TIMEOUT_MS,
 		() => eda.pcb_PrimitiveString.modify(primitiveId, {
-			layer: getOptionalString(params.layer) as TPCB_LayersOfImage | undefined,
+			layer: coerceOptionalHostValue<TPCB_LayersOfImage>(getOptionalString(params.layer)),
 			x: getOptionalNumber(params.x),
 			y: getOptionalNumber(params.y),
 			text: getOptionalString(params.text),
 			fontFamily: getOptionalString(params.fontFamily),
 			fontSize: getOptionalNumber(params.fontSize),
 			lineWidth: getOptionalNumber(params.lineWidth),
-			alignMode: getOptionalNumber(params.alignMode) as EPCB_PrimitiveStringAlignMode | undefined,
+			alignMode: coerceOptionalHostValue<EPCB_PrimitiveStringAlignMode>(getOptionalNumber(params.alignMode)),
 			rotation: getOptionalNumber(params.rotation),
 			reverse: getOptionalBoolean(params.reverse),
 			expansion: getOptionalNumber(params.expansion),
@@ -2149,9 +2159,9 @@ function getAccessibleEditorShellWindow(): (Window & typeof globalThis) | undefi
 
 	try {
 		if (globalWindow?.top)
-			return globalWindow.top;
+			return globalWindow.top as Window & typeof globalThis;
 		if (documentWindow?.top)
-			return documentWindow.top;
+			return documentWindow.top as Window & typeof globalThis;
 	}
 	catch {
 		// Ignore cross-window access issues and fall back to the local runtime window.
@@ -2448,6 +2458,18 @@ function getRequiredNumber(value: unknown, key: string): number {
 		throw new Error(`Expected a valid number for ${key}`);
 
 	return value;
+}
+
+function coerceHostValue<T>(value: unknown): T {
+	return value as T;
+}
+
+function coerceOptionalHostValue<T>(value: unknown): T | undefined {
+	return value === undefined ? undefined : value as T;
+}
+
+function coerceOptionalNullableHostValue<T>(value: unknown): T | null | undefined {
+	return value == null ? value as null | undefined : value as T;
 }
 
 function getRequiredLineCoordinates(value: unknown, key: string): Array<number> | Array<Array<number>> {

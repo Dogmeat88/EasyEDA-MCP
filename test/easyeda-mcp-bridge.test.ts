@@ -1,4 +1,6 @@
 import { strict as assert } from 'node:assert';
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import test from 'node:test';
 
 import { shouldSyncBridgeHeaderMenus, syncBridgeHeaderMenus } from '../src/bridge-header-menus';
@@ -92,8 +94,8 @@ test('inferCurrentDocumentFromEditorShell stays silent when the editor shell has
 });
 
 test('extension version is sourced from extension.json', async () => {
-	const extensionManifest = await import('../extension.json');
-	assert.equal(EXTENSION_VERSION, extensionManifest.default.version);
+	const extensionManifest = JSON.parse(await readFile(resolve(__dirname, '..', 'extension.json'), 'utf8')) as { version: string };
+	assert.equal(EXTENSION_VERSION, extensionManifest.version);
 });
 
 test('buildSchematicPinStubLine follows pin rotation when no explicit offset is provided', () => {
@@ -337,7 +339,7 @@ test('verifyCreatedBoard fails when the linked schematic title block still adver
 				pcb: { uuid: 'pcb-1' },
 			},
 		], 'Board1_3', 'sch-1', 'pcb-1'),
-		/title block still advertises board Board1/,
+		/still advertises board Board1 in its title block/,
 	);
 });
 

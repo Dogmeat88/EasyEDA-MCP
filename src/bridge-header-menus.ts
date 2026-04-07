@@ -11,8 +11,8 @@ export interface BridgeHeaderMenuDefinition {
 }
 
 export interface BridgeHeaderMenuApi {
-	replaceHeaderMenus?: (menus: BridgeHeaderMenuDefinition[]) => Promise<unknown> | unknown;
-	insertHeaderMenus?: (menus: BridgeHeaderMenuDefinition[]) => Promise<unknown> | unknown;
+	replaceHeaderMenus?: (menus: unknown) => Promise<unknown> | unknown;
+	insertHeaderMenus?: (menus: unknown) => Promise<unknown> | unknown;
 }
 
 export interface BridgeHeaderMenuDocumentLike {

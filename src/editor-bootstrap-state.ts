@@ -21,7 +21,7 @@ export function getRuntimeLocationHash(locationLike: { hash?: unknown } | undefi
 }
 
 export function inferCurrentDocumentFromEditorShell(
-	currentDocument: Record<string, unknown> | undefined,
+	currentDocument: unknown,
 	urlHash: string,
 	iframeDescriptors: EditorShellIframeDescriptor[],
 ): Record<string, unknown> | undefined {

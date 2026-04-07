@@ -15,8 +15,8 @@
 		"build": "npm run compile && ts-node ./build/packaged.ts",
 		"mcp:server": "ts-node ./src/mcp-server.ts",
 		"mcp:server:daemon": "EASYEDA_MCP_STDIO_ENABLED=0 ts-node ./src/mcp-server.ts",
-		"test": "node --test --require ts-node/register ./test/**/*.test.ts",
-		"test:live": "node --test --require ts-node/register ./test/live-mcp.integration.test.ts"
+		"test": "TS_NODE_COMPILER_OPTIONS='{\"ignoreDeprecations\":\"5.0\"}' node --test --require ts-node/register/transpile-only ./test/**/*.test.ts",
+		"test:live": "TS_NODE_COMPILER_OPTIONS='{\"ignoreDeprecations\":\"5.0\"}' node --test --require ts-node/register/transpile-only ./test/live-mcp.integration.test.ts"
 	},
 	"dependencies": {
 		"@modelcontextprotocol/sdk": "^1.29.0",
