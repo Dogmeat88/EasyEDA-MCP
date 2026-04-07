@@ -1,6 +1,139 @@
 # EasyEDA MCP Scaffold
 
-This repository now includes a minimal MCP server scaffold and a matching EasyEDA extension bridge.
+## Quick Start
+
+This document describes the MCP server and EasyEDA bridge in detail. If you want to set it up and use it quickly, start here.
+
+### What You Need
+
+- Node.js `>= 20.17.0`
+- `npm`
+- EasyEDA Pro / JLCEDA Pro
+- This repository cloned locally
+
+### 1. Install Dependencies
+
+From the repository root:
+
+```shell
+npm install
+```
+
+### 2. Build the EasyEDA Bridge Extension
+
+```shell
+npm run build
+```
+
+This creates the installable EasyEDA extension package under `./build/dist/`.
+
+### 3. Install the Extension in EasyEDA Pro
+
+Install the generated package from `./build/dist/` into EasyEDA Pro.
+
+After installation, the EasyEDA top menu exposes `EasyEDA MCP Bridge` with:
+
+- `Reconnect`
+- `Status`
+
+If EasyEDA prompts for external interaction permission, allow it so the bridge can connect back to the local MCP server.
+
+### 4. Start the Local MCP Server
+
+Run this from the repository root:
+
+```shell
+npm run mcp:server
+```
+
+By default this starts:
+
+- the MCP stdio server for your AI client
+- the EasyEDA bridge WebSocket at `ws://127.0.0.1:19732/easyeda-mcp`
+- the local HTTP attach endpoint at `http://127.0.0.1:19733/mcp`
+
+`npm run mcp:server` already exposes the HTTP attach endpoint above. If you want to run the bridge services without the stdio transport, use:
+
+```shell
+npm run mcp:server:daemon
+```
+
+### 5. Configure Your MCP Client
+
+VS Code or another stdio-based MCP client:
+
+```json
+{
+   "servers": {
+      "easyeda-mcp": {
+         "type": "stdio",
+         "command": "npm",
+         "args": ["run", "mcp:server"],
+         "cwd": "/path/to/EasyEDA-MCP"
+      }
+   }
+}
+```
+
+Claude Desktop example:
+
+```json
+{
+   "mcpServers": {
+      "easyeda-mcp": {
+         "command": "npm",
+         "args": ["run", "mcp:server"],
+         "cwd": "/path/to/EasyEDA-MCP"
+      }
+   }
+}
+```
+
+Ready-to-copy examples are already included in this repo:
+
+- `examples/mcp/vscode.mcp.json`
+- `examples/mcp/claude_desktop_config.json`
+
+### 6. First Connection
+
+1. Open EasyEDA Pro.
+2. Make sure the EasyEDA MCP Bridge extension is installed.
+3. Start the local MCP server.
+4. Connect your MCP client to `easyeda-mcp`.
+5. In EasyEDA, click `EasyEDA MCP Bridge -> Reconnect`.
+6. Call `bridge_status` from your MCP client.
+
+If the bridge is healthy, continue with `get_current_context` to see whether EasyEDA is currently exposing a project, schematic, or PCB document.
+
+### 7. Smallest Useful Smoke Test
+
+Use this tool order to verify the full chain end to end:
+
+1. `bridge_status`
+2. `ping_bridge`
+3. `get_current_context`
+4. `list_project_objects`
+
+If `bridge_status` reports that the bridge is disconnected, the usual fix is to go back to EasyEDA and click `Reconnect` once.
+
+### 8. Typical First Workflow
+
+Once the bridge is connected, a practical first workflow is:
+
+1. `list_project_objects` to inspect boards, schematics, PCBs, and panels
+2. `open_document` to switch to the document you want to edit
+3. `search_library_devices` to find components by keyword or LCSC part number
+4. `add_schematic_component` or `add_pcb_component` to place components
+5. `get_capabilities` or `get_usage_guide` if you need to adapt to host/runtime limitations
+
+### 9. Troubleshooting
+
+- Bridge not connected: In EasyEDA, use `EasyEDA MCP Bridge -> Reconnect`, confirm external interaction permission is enabled, then call `bridge_status` again.
+- MCP client cannot start the server: confirm `npm install` has been run and use Node.js `>= 20.17.0`.
+- Extension menu missing in EasyEDA: rebuild with `npm run build` and reinstall the package from `./build/dist/`.
+- You need attach-style testing instead of stdio: use the local endpoint at `http://127.0.0.1:19733/mcp`.
+
+This repository now includes a local MCP server scaffold and a matching EasyEDA extension bridge.
 
 The scaffold now includes three additional pieces beyond the original bridge:
 
@@ -23,7 +156,7 @@ It now also includes:
 
 1. `src/mcp-server.ts`
 
-   Runs a local MCP server over stdio and exposes a small set of EasyEDA tools.
+   Runs a local MCP server over stdio and exposes the EasyEDA MCP tool surface documented here.
 
 2. `src/easyeda-mcp-bridge.ts`
 
@@ -343,7 +476,7 @@ Routing limitation: the current SDK surface exposed here supports creating PCB l
    EASYEDA_MCP_LIVE_TEST=1 EASYEDA_MCP_LIVE_ATTACH_EXISTING=1 EASYEDA_MCP_LIVE_SERVER_URL=http://127.0.0.1:19733/mcp npm run test:live
    ```
 
-3. In EasyEDA Pro, ensure the extension has permission for external interaction.
+3. In EasyEDA Pro, ensure the extension is installed and has permission for external interaction.
 
 4. Open the extension menu and use `Reconnect` if EasyEDA needs to reattach to the local bridge.
 
