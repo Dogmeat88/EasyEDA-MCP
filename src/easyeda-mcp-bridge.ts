@@ -8,6 +8,7 @@ import { allocateBridgeSocketId, shouldHandleBridgeSocketCallback } from './brid
 import { describeEditorBootstrapState, getOpenDocumentBootstrapFailure, getRuntimeLocationHash, inferCurrentDocumentFromEditorShell } from './editor-bootstrap-state';
 import { EXTENSION_VERSION } from './extension-metadata';
 import { withHostMethodTimeout } from './host-method-timeout';
+import { finalizeHostPrimitive } from './host-primitive-finalizer';
 import {
 	computeSourceRevision,
 	createBridgeError,
@@ -63,6 +64,8 @@ let bridgeSocketSequence = 0;
 
 const PCB_TEXT_HOST_TIMEOUT_MS = 4_000;
 const PCB_TEXT_HOST_TIMEOUT_HINT = 'This EasyEDA host session is not responding to pcb_PrimitiveString APIs. PCB text tools are unavailable in this session. Try reopening the PCB document or restarting the EasyEDA extension host.';
+const SCHEMATIC_COMPONENT_HOST_TIMEOUT_MS = 12_000;
+const SCHEMATIC_COMPONENT_HOST_TIMEOUT_HINT = 'EasyEDA schematic component placement is taking too long in this session. The bridge will verify whether the component was created before failing.';
 const BRIDGE_WATCHDOG_INTERVAL_MS = 5_000;
 const BRIDGE_WATCHDOG_RECONNECT_COOLDOWN_MS = 5_000;
 
@@ -861,20 +864,50 @@ async function copySchematicPage(params: Record<string, unknown>): Promise<Recor
 
 async function addSchematicComponent(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	await requireCurrentDocumentType(EDMT_EditorDocumentType.SCHEMATIC_PAGE, 'Schematic page required for schematic component placement');
-	const primitive = await eda.sch_PrimitiveComponent.create(
-		getRequiredDeviceReference(params),
-		getRequiredNumber(params.x, 'x'),
-		getRequiredNumber(params.y, 'y'),
-		getOptionalString(params.subPartName),
-		getOptionalNumber(params.rotation),
-		getOptionalBoolean(params.mirror),
-		getOptionalBoolean(params.addIntoBom),
-		getOptionalBoolean(params.addIntoPcb),
-	);
+	const deviceReference = getRequiredDeviceReference(params);
+	const x = getRequiredNumber(params.x, 'x');
+	const y = getRequiredNumber(params.y, 'y');
+	const subPartName = getOptionalString(params.subPartName);
+	const rotation = getOptionalNumber(params.rotation);
+	const mirror = getOptionalBoolean(params.mirror);
+	const addIntoBom = getOptionalBoolean(params.addIntoBom);
+	const addIntoPcb = getOptionalBoolean(params.addIntoPcb);
+	const previousPrimitiveIds = await listRecoverableSchematicComponentPrimitiveIds();
+	let primitive: unknown;
+	let recoveredFromError = false;
+	let recoveryError: string | undefined;
+
+	try {
+		primitive = await withHostMethodTimeout(
+			'sch_PrimitiveComponent.create',
+			SCHEMATIC_COMPONENT_HOST_TIMEOUT_MS,
+			async () => finalizeHostPrimitive(await eda.sch_PrimitiveComponent.create(
+				deviceReference,
+				x,
+				y,
+				subPartName,
+				rotation,
+				mirror,
+				addIntoBom,
+				addIntoPcb,
+			)),
+			SCHEMATIC_COMPONENT_HOST_TIMEOUT_HINT,
+		);
+	}
+	catch (error: unknown) {
+		primitive = await recoverCreatedSchematicComponentFromHostError(previousPrimitiveIds);
+		if (!primitive)
+			throw error;
+
+		recoveredFromError = true;
+		recoveryError = toErrorMessage(error);
+	}
 	const saved = await saveSchematicDocumentIfRequested(getOptionalBoolean(params.saveAfter));
 
 	return {
 		primitive,
+		recoveredFromError,
+		recoveryError,
 		saved,
 	};
 }
@@ -882,7 +915,7 @@ async function addSchematicComponent(params: Record<string, unknown>): Promise<R
 async function modifySchematicComponent(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	await requireCurrentDocumentType(EDMT_EditorDocumentType.SCHEMATIC_PAGE, 'Schematic page required for schematic component editing');
 	const primitiveId = getRequiredString(params.primitiveId, 'primitiveId');
-	const primitive = await eda.sch_PrimitiveComponent.modify(primitiveId, {
+	const primitive = await finalizeHostPrimitive(await eda.sch_PrimitiveComponent.modify(primitiveId, {
 		x: getOptionalNumber(params.x),
 		y: getOptionalNumber(params.y),
 		rotation: getOptionalNumber(params.rotation),
@@ -897,7 +930,7 @@ async function modifySchematicComponent(params: Record<string, unknown>): Promis
 		supplier: getOptionalNullableString(params.supplier),
 		supplierId: getOptionalNullableString(params.supplierId),
 		otherProperty: getOptionalScalarRecord(params.otherProperty),
-	});
+	}));
 	const saved = await saveSchematicDocumentIfRequested(getOptionalBoolean(params.saveAfter));
 
 	return {
@@ -923,14 +956,14 @@ async function deleteSchematicComponent(params: Record<string, unknown>): Promis
 
 async function addSchematicNetFlag(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	await requireCurrentDocumentType(EDMT_EditorDocumentType.SCHEMATIC_PAGE, 'Schematic page required for schematic net flags');
-	const primitive = await eda.sch_PrimitiveComponent.createNetFlag(
+	const primitive = await finalizeHostPrimitive(await eda.sch_PrimitiveComponent.createNetFlag(
 		getRequiredString(params.identification, 'identification') as 'Power' | 'Ground' | 'AnalogGround' | 'ProtectGround',
 		getRequiredString(params.net, 'net'),
 		getRequiredNumber(params.x, 'x'),
 		getRequiredNumber(params.y, 'y'),
 		getOptionalNumber(params.rotation),
 		getOptionalBoolean(params.mirror),
-	);
+	));
 	const saved = await saveSchematicDocumentIfRequested(getOptionalBoolean(params.saveAfter));
 
 	return {
@@ -941,14 +974,14 @@ async function addSchematicNetFlag(params: Record<string, unknown>): Promise<Rec
 
 async function addSchematicNetPort(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	await requireCurrentDocumentType(EDMT_EditorDocumentType.SCHEMATIC_PAGE, 'Schematic page required for schematic net ports');
-	const primitive = await eda.sch_PrimitiveComponent.createNetPort(
+	const primitive = await finalizeHostPrimitive(await eda.sch_PrimitiveComponent.createNetPort(
 		getRequiredString(params.direction, 'direction') as 'IN' | 'OUT' | 'BI',
 		getRequiredString(params.net, 'net'),
 		getRequiredNumber(params.x, 'x'),
 		getRequiredNumber(params.y, 'y'),
 		getOptionalNumber(params.rotation),
 		getOptionalBoolean(params.mirror),
-	);
+	));
 	const saved = await saveSchematicDocumentIfRequested(getOptionalBoolean(params.saveAfter));
 
 	return {
@@ -959,12 +992,12 @@ async function addSchematicNetPort(params: Record<string, unknown>): Promise<Rec
 
 async function addSchematicShortCircuitFlag(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	await requireCurrentDocumentType(EDMT_EditorDocumentType.SCHEMATIC_PAGE, 'Schematic page required for short-circuit markers');
-	const primitive = await eda.sch_PrimitiveComponent.createShortCircuitFlag(
+	const primitive = await finalizeHostPrimitive(await eda.sch_PrimitiveComponent.createShortCircuitFlag(
 		getRequiredNumber(params.x, 'x'),
 		getRequiredNumber(params.y, 'y'),
 		getOptionalNumber(params.rotation),
 		getOptionalBoolean(params.mirror),
-	);
+	));
 	const saved = await saveSchematicDocumentIfRequested(getOptionalBoolean(params.saveAfter));
 
 	return {
@@ -1094,7 +1127,7 @@ async function addSchematicText(params: Record<string, unknown>): Promise<Record
 	const x = getRequiredNumber(params.x, 'x');
 	const y = getRequiredNumber(params.y, 'y');
 	const content = getRequiredString(params.content, 'content');
-	const primitive = await eda.sch_PrimitiveText.create(
+	const primitive = await finalizeHostPrimitive(await eda.sch_PrimitiveText.create(
 		x,
 		y,
 		content,
@@ -1106,7 +1139,7 @@ async function addSchematicText(params: Record<string, unknown>): Promise<Record
 		getOptionalBoolean(params.italic),
 		getOptionalBoolean(params.underLine),
 		getOptionalNumber(params.alignMode) as ESCH_PrimitiveTextAlignMode | undefined,
-	);
+	));
 	const saved = getOptionalBoolean(params.saveAfter) ? await eda.sch_Document.save() : undefined;
 
 	return {
@@ -1345,7 +1378,7 @@ async function addSchematicNetLabel(params: Record<string, unknown>): Promise<Re
 	const y = getRequiredNumber(params.y, 'y');
 	const net = getRequiredString(params.net, 'net');
 	assertSchematicNetLabelCapability();
-	const primitive = await getSchematicAttributeApi().createNetLabel(x, y, net);
+	const primitive = await finalizeHostPrimitive(await getSchematicAttributeApi().createNetLabel(x, y, net));
 	const saved = getOptionalBoolean(params.saveAfter) ? await eda.sch_Document.save() : undefined;
 
 	return {
@@ -1357,13 +1390,13 @@ async function addSchematicNetLabel(params: Record<string, unknown>): Promise<Re
 async function addSchematicWire(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	await requireCurrentDocumentType(EDMT_EditorDocumentType.SCHEMATIC_PAGE, 'Schematic page required for schematic wire');
 	const line = getRequiredLineCoordinates(params.line, 'line');
-	const primitive = await eda.sch_PrimitiveWire.create(
+	const primitive = await finalizeHostPrimitive(await eda.sch_PrimitiveWire.create(
 		line,
 		getOptionalString(params.net),
 		getOptionalNullableString(params.color),
 		getOptionalNullableNumber(params.lineWidth),
 		coerceOptionalNullableHostValue<ESCH_PrimitiveLineType>(getOptionalNumber(params.lineType)),
-	);
+	));
 	const saved = getOptionalBoolean(params.saveAfter) ? await eda.sch_Document.save() : undefined;
 
 	return {
@@ -1415,7 +1448,6 @@ async function addPcbLine(params: Record<string, unknown>): Promise<Record<strin
 	await requireCurrentDocumentType(EDMT_EditorDocumentType.PCB, 'PCB document required for PCB line');
 	const currentDocument = await requireCurrentDocument();
 	const layerName = getRequiredString(params.layer, 'layer');
-	const layer = coerceHostValue<TPCB_LayersOfLine>(layerName);
 	const net = resolvePcbLineNetForCreate(layerName, params.net);
 	const hostLayer = coerceHostValue<TPCB_LayersOfLine>(normalizePcbLineLayerForHost(layerName));
 	const startX = getRequiredNumber(params.startX, 'startX');
@@ -1561,7 +1593,7 @@ async function getPcbNetPrimitives(params: Record<string, unknown>): Promise<Rec
 async function modifySchematicText(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	await requireCurrentDocumentType(EDMT_EditorDocumentType.SCHEMATIC_PAGE, 'Schematic page required for schematic text');
 	const primitiveId = getRequiredString(params.primitiveId, 'primitiveId');
-	const primitive = await eda.sch_PrimitiveText.modify(primitiveId, {
+	const primitive = await finalizeHostPrimitive(await eda.sch_PrimitiveText.modify(primitiveId, {
 		x: getOptionalNumber(params.x),
 		y: getOptionalNumber(params.y),
 		content: getOptionalString(params.content),
@@ -1573,7 +1605,7 @@ async function modifySchematicText(params: Record<string, unknown>): Promise<Rec
 		italic: getOptionalBoolean(params.italic),
 		underLine: getOptionalBoolean(params.underLine),
 		alignMode: coerceOptionalHostValue<ESCH_PrimitiveTextAlignMode>(getOptionalNumber(params.alignMode)),
-	});
+	}));
 	const saved = await saveSchematicDocumentIfRequested(getOptionalBoolean(params.saveAfter));
 
 	return {
@@ -1600,7 +1632,7 @@ async function deleteSchematicText(params: Record<string, unknown>): Promise<Rec
 async function modifySchematicNetLabel(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	await requireCurrentDocumentType(EDMT_EditorDocumentType.SCHEMATIC_PAGE, 'Schematic page required for schematic net label');
 	const primitiveId = getRequiredString(params.primitiveId, 'primitiveId');
-	const primitive = await getSchematicAttributeApi().modify(primitiveId, {
+	const primitive = await finalizeHostPrimitive(await getSchematicAttributeApi().modify(primitiveId, {
 		x: getOptionalNullableNumber(params.x),
 		y: getOptionalNullableNumber(params.y),
 		rotation: getOptionalNullableNumber(params.rotation),
@@ -1615,7 +1647,7 @@ async function modifySchematicNetLabel(params: Record<string, unknown>): Promise
 		value: getOptionalString(params.net),
 		keyVisible: getOptionalNullableBoolean(params.keyVisible),
 		valueVisible: getOptionalNullableBoolean(params.valueVisible),
-	});
+	}));
 	const saved = await saveSchematicDocumentIfRequested(getOptionalBoolean(params.saveAfter));
 
 	return {
@@ -1628,13 +1660,13 @@ async function modifySchematicNetLabel(params: Record<string, unknown>): Promise
 async function modifySchematicWire(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	await requireCurrentDocumentType(EDMT_EditorDocumentType.SCHEMATIC_PAGE, 'Schematic page required for schematic wire');
 	const primitiveId = getRequiredString(params.primitiveId, 'primitiveId');
-	const primitive = await eda.sch_PrimitiveWire.modify(primitiveId, {
+	const primitive = await finalizeHostPrimitive(await eda.sch_PrimitiveWire.modify(primitiveId, {
 		line: getOptionalLineCoordinates(params.line),
 		net: getOptionalString(params.net),
 		color: getOptionalNullableString(params.color),
 		lineWidth: getOptionalNullableNumber(params.lineWidth),
 		lineType: getOptionalNullableNumber(params.lineType) as ESCH_PrimitiveLineType | null | undefined,
-	});
+	}));
 	const saved = await saveSchematicDocumentIfRequested(getOptionalBoolean(params.saveAfter));
 
 	return {
@@ -2646,6 +2678,10 @@ async function listRecoverablePcbComponentPrimitiveIds(
 	return await eda.pcb_PrimitiveComponent.getAllPrimitiveId(layer, primitiveLock) ?? [];
 }
 
+async function listRecoverableSchematicComponentPrimitiveIds(): Promise<string[]> {
+	return await eda.sch_PrimitiveComponent.getAllPrimitiveId(undefined as never, undefined) ?? [];
+}
+
 async function recoverCreatedPcbComponentFromHostError(
 	previousPrimitiveIds: string[],
 	layer: TPCB_LayersOfComponent,
@@ -2658,6 +2694,22 @@ async function recoverCreatedPcbComponentFromHostError(
 			return undefined;
 
 		return await eda.pcb_Primitive.getPrimitiveByPrimitiveId(addedPrimitiveIds[0]);
+	}
+	catch {
+		return undefined;
+	}
+}
+
+async function recoverCreatedSchematicComponentFromHostError(
+	previousPrimitiveIds: string[],
+): Promise<unknown | undefined> {
+	try {
+		const nextPrimitiveIds = await listRecoverableSchematicComponentPrimitiveIds();
+		const addedPrimitiveIds = findAddedPrimitiveIds(previousPrimitiveIds, nextPrimitiveIds);
+		if (addedPrimitiveIds.length !== 1)
+			return undefined;
+
+		return await eda.sch_Primitive.getPrimitiveByPrimitiveId(addedPrimitiveIds[0]);
 	}
 	catch {
 		return undefined;

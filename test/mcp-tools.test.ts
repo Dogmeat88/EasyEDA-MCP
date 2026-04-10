@@ -328,6 +328,72 @@ test('set_document_source rejects host false success when readback does not matc
 	);
 });
 
+test('add_schematic_component recovers when EasyEDA applies the component before the bridge timeout returns', async () => {
+	const originalSource = '["DOCTYPE","SCH","1.1"]\n["HEAD",{"originX":0,"originY":0,"version":"2","maxId":10}]';
+	const updatedSource = `${originalSource}\n["COMPONENT","e400","XIAO-ESP32-C3.1",260,220,0,0,{},0]`;
+	let schematicPrimitiveIds = ['e61', 'e112'];
+	const registeredTools = createRegisteredTools({
+		async call(method, params) {
+			if (method === 'add_schematic_component') {
+				schematicPrimitiveIds = [...schematicPrimitiveIds, 'e400'];
+				throw new Error('EasyEDA bridge timed out waiting for add_schematic_component');
+			}
+
+			if (method === 'list_schematic_primitive_ids') {
+				return {
+					family: 'component',
+					primitiveIds: schematicPrimitiveIds,
+				};
+			}
+
+			if (method === 'get_schematic_primitive') {
+				assert.equal(params?.primitiveId, 'e400');
+				return {
+					primitiveId: 'e400',
+					primitive: {
+						primitiveId: 'e400',
+						x: 260,
+						y: 220,
+						subPartName: 'XIAO-ESP32-C3.1',
+					},
+				};
+			}
+
+			if (method === 'get_document_source') {
+				const source = schematicPrimitiveIds.includes('e400') ? updatedSource : originalSource;
+				return {
+					source,
+					sourceHash: computeSourceRevision(source),
+					characters: source.length,
+				};
+			}
+
+			return { method, params };
+		},
+		getConnectionState() {
+			return { connected: true };
+		},
+	});
+	const addSchematicComponentTool = registeredTools.find(tool => tool.name === 'add_schematic_component');
+
+	assert.ok(addSchematicComponentTool);
+	const result = await addSchematicComponentTool.handler({
+		libraryUuid: 'lib-1',
+		deviceUuid: 'dev-1',
+		x: 260,
+		y: 220,
+		saveAfter: true,
+	}) as { structuredContent: Record<string, unknown> };
+
+	assert.equal(result.structuredContent.primitiveId, 'e400');
+	assert.equal((result.structuredContent.primitive as { primitiveId: string }).primitiveId, 'e400');
+	assert.equal(result.structuredContent.saved, true);
+	assert.equal(result.structuredContent.timeoutRecovered, true);
+	assert.equal(result.structuredContent.readbackVerified, true);
+	assert.equal(result.structuredContent.previousSourceHash, computeSourceRevision(originalSource));
+	assert.equal(result.structuredContent.sourceHash, computeSourceRevision(updatedSource));
+});
+
 test('delete_pcb_component recovers when the primitive disappears before the timeout response returns', async () => {
 	const registeredTools = createRegisteredTools({
 		async call(method, params) {

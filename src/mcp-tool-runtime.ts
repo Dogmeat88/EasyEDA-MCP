@@ -1,6 +1,7 @@
 import type { EasyedaBridgeCaller, ToolRegistrar } from './mcp-tool-types';
 import { computeSourceRevision } from './mcp-bridge-protocol';
 import * as schemas from './mcp-tool-schemas';
+import { findAddedPrimitiveIds } from './primitive-id-diff';
 
 export function registerEasyedaTools(server: ToolRegistrar, bridgeSession: EasyedaBridgeCaller): void {
 	for (const registration of createToolRegistrations(bridgeSession))
@@ -123,7 +124,7 @@ function createToolRegistrations(bridgeSession: EasyedaBridgeCaller): ToolRegist
 		{
 			name: 'add_schematic_component',
 			config: { description: 'Place a library device as a component on the active schematic page.', inputSchema: schemas.addSchematicComponentInputSchema },
-			handler: async args => makeToolResult(await bridgeSession.call('add_schematic_component', args)),
+			handler: async args => makeToolResult(await callAddSchematicComponentWithRecovery(bridgeSession, args)),
 		},
 		{
 			name: 'modify_schematic_component',
@@ -491,6 +492,98 @@ async function getDocumentSourceSnapshot(bridgeSession: EasyedaBridgeCaller): Pr
 		sourceHash,
 		characters: typeof currentDocumentSource?.characters === 'number' ? currentDocumentSource.characters : source.length,
 	};
+}
+
+async function listSchematicComponentPrimitiveIds(bridgeSession: EasyedaBridgeCaller): Promise<string[] | undefined> {
+	const response = asRecord(await bridgeSession.call('list_schematic_primitive_ids', { family: 'component' }));
+	const primitiveIds = response?.primitiveIds;
+	if (!Array.isArray(primitiveIds))
+		return undefined;
+
+	return primitiveIds.filter((value): value is string => typeof value === 'string');
+}
+
+async function recoverCreatedSchematicComponentFromReadback(
+	bridgeSession: EasyedaBridgeCaller,
+	previousPrimitiveIds: string[] | undefined,
+	previousSourceSnapshot?: {
+		sourceHash: string;
+	},
+): Promise<Record<string, unknown> | null> {
+	if (!previousPrimitiveIds)
+		return null;
+
+	try {
+		const nextPrimitiveIds = await listSchematicComponentPrimitiveIds(bridgeSession);
+		if (!nextPrimitiveIds)
+			return null;
+
+		const addedPrimitiveIds = findAddedPrimitiveIds(previousPrimitiveIds, nextPrimitiveIds);
+		if (addedPrimitiveIds.length !== 1)
+			return null;
+
+		const primitiveId = addedPrimitiveIds[0];
+		const primitiveResponse = asRecord(await bridgeSession.call('get_schematic_primitive', { primitiveId }));
+		if (!primitiveResponse || !('primitive' in primitiveResponse))
+			return null;
+
+		const primitive = primitiveResponse.primitive;
+		if (previousSourceSnapshot) {
+			const currentDocumentSource = await getDocumentSourceSnapshot(bridgeSession);
+			if (!currentDocumentSource.source.includes(`"${primitiveId}"`))
+				return null;
+
+			return {
+				primitiveId,
+				primitive,
+				saved: true,
+				readbackVerified: true,
+				sourceHash: currentDocumentSource.sourceHash,
+				previousSourceHash: previousSourceSnapshot.sourceHash,
+				characters: currentDocumentSource.characters,
+			};
+		}
+
+		return {
+			primitiveId,
+			primitive,
+			readbackVerified: true,
+		};
+	}
+	catch {
+		return null;
+	}
+}
+
+async function callAddSchematicComponentWithRecovery(
+	bridgeSession: EasyedaBridgeCaller,
+	args: Record<string, unknown>,
+): Promise<unknown> {
+	const previousPrimitiveIds = await listSchematicComponentPrimitiveIds(bridgeSession);
+	const previousSourceSnapshot = args.saveAfter === true
+		? await getDocumentSourceSnapshot(bridgeSession)
+		: undefined;
+
+	try {
+		return normalizeStructuredContent(await bridgeSession.call('add_schematic_component', args));
+	}
+	catch (error: unknown) {
+		if (!(error instanceof Error) || !error.message.includes('timed out waiting for add_schematic_component'))
+			throw error;
+
+		const recovered = await recoverCreatedSchematicComponentFromReadback(
+			bridgeSession,
+			previousPrimitiveIds,
+			previousSourceSnapshot,
+		);
+		if (!recovered)
+			throw error;
+
+		return {
+			...recovered,
+			timeoutRecovered: true,
+		};
+	}
 }
 
 async function listPcbComponentPrimitiveIds(bridgeSession: EasyedaBridgeCaller): Promise<string[] | undefined> {
