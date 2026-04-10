@@ -64,7 +64,7 @@ let bridgeSocketSequence = 0;
 
 const PCB_TEXT_HOST_TIMEOUT_MS = 4_000;
 const PCB_TEXT_HOST_TIMEOUT_HINT = 'This EasyEDA host session is not responding to pcb_PrimitiveString APIs. PCB text tools are unavailable in this session. Try reopening the PCB document or restarting the EasyEDA extension host.';
-const SCHEMATIC_COMPONENT_HOST_TIMEOUT_MS = 12_000;
+const SCHEMATIC_COMPONENT_HOST_TIMEOUT_MS = 45_000;
 const SCHEMATIC_COMPONENT_HOST_TIMEOUT_HINT = 'EasyEDA schematic component placement is taking too long in this session. The bridge will verify whether the component was created before failing.';
 const BRIDGE_WATCHDOG_INTERVAL_MS = 5_000;
 const BRIDGE_WATCHDOG_RECONNECT_COOLDOWN_MS = 5_000;
