@@ -21,6 +21,7 @@ import {
 	serializeBridgeEnvelope,
 } from './mcp-bridge-protocol';
 import { normalizePcbLineLayerForHost } from './pcb-layer';
+import { getPcbPadRouteAnchor } from './pcb-pad-anchor';
 import { getOptionalTrimmedStringIncludingEmpty, resolvePcbLineNetForCreate } from './pcb-line-net';
 import { findResolvedPcbPad } from './pcb-pad-geometry';
 import { buildPcbPolylineSource } from './pcb-polyline';
@@ -1308,12 +1309,15 @@ async function routePcbLineBetweenComponentPads(params: Record<string, unknown>)
 	const fromPad = await requirePcbPad(fromComponentPrimitiveId, fromPadNumber);
 	const toPad = await requirePcbPad(toComponentPrimitiveId, toPadNumber);
 	const net = getRouteNet(fromPad, toPad, getOptionalString(params.net));
+	const lineWidth = getOptionalNumber(params.lineWidth);
+	const start = getPcbPadRouteAnchor(fromPad, { x: toPad.getState_X(), y: toPad.getState_Y() }, lineWidth);
+	const end = getPcbPadRouteAnchor(toPad, { x: fromPad.getState_X(), y: fromPad.getState_Y() }, lineWidth);
 	const primitive = await createPcbLineSegment(
 		net,
 		layer,
-		{ x: fromPad.getState_X(), y: fromPad.getState_Y() },
-		{ x: toPad.getState_X(), y: toPad.getState_Y() },
-		getOptionalNumber(params.lineWidth),
+		start,
+		end,
+		lineWidth,
 		getOptionalBoolean(params.primitiveLock),
 	);
 	const saved = await savePcbDocumentIfRequested(currentDocument.uuid, getOptionalBoolean(params.saveAfter));
@@ -1340,10 +1344,13 @@ async function routePcbLinesBetweenComponentPads(params: Record<string, unknown>
 	const toPad = await requirePcbPad(toComponentPrimitiveId, toPadNumber);
 	const net = getRouteNet(fromPad, toPad, getOptionalString(params.net));
 	const waypoints = getRequiredWaypointArray(params.waypoints, 'waypoints');
+	const lineWidth = getOptionalNumber(params.lineWidth);
+	const firstTarget = waypoints[0] ?? { x: toPad.getState_X(), y: toPad.getState_Y() };
+	const lastTarget = waypoints.at(-1) ?? { x: fromPad.getState_X(), y: fromPad.getState_Y() };
 	const points = [
-		{ x: fromPad.getState_X(), y: fromPad.getState_Y() },
+		getPcbPadRouteAnchor(fromPad, firstTarget, lineWidth),
 		...waypoints,
-		{ x: toPad.getState_X(), y: toPad.getState_Y() },
+		getPcbPadRouteAnchor(toPad, lastTarget, lineWidth),
 	];
 	const hostLayer = coerceHostValue<TPCB_LayersOfLine>(normalizePcbLineLayerForHost(layerName));
 	const polygon = eda.pcb_MathPolygon.createPolygon(buildPcbPolylineSource(points));
@@ -1354,7 +1361,7 @@ async function routePcbLinesBetweenComponentPads(params: Record<string, unknown>
 		net,
 		hostLayer,
 		polygon,
-		getOptionalNumber(params.lineWidth),
+		lineWidth,
 		getOptionalBoolean(params.primitiveLock),
 	);
 
