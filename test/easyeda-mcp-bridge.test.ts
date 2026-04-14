@@ -118,6 +118,7 @@ test('findAddedPrimitiveIds returns only newly created primitive ids in order', 
 
 test('recoverCreatedPcbComponentFromHostError retries until the created component becomes visible', async () => {
 	const previousEda = globalThis.eda;
+	const previousPcbPrimitiveComponent = previousEda?.pcb_PrimitiveComponent;
 	const primitiveIdsByAttempt = [
 		['e0'],
 		['e0'],
@@ -127,9 +128,9 @@ test('recoverCreatedPcbComponentFromHostError retries until the created componen
 	const recoveredPrimitive = { primitiveId: 'e1', designator: 'U1' };
 
 	globalThis.eda = {
-		...previousEda,
+		...(previousEda ?? {}),
 		pcb_PrimitiveComponent: {
-			...previousEda.pcb_PrimitiveComponent,
+			...(previousPcbPrimitiveComponent ?? {}),
 			getAllPrimitiveId: async () => primitiveIdsByAttempt[Math.min(listCalls++, primitiveIdsByAttempt.length - 1)],
 			get: async (primitiveId: string) => ({ ...recoveredPrimitive, primitiveId }),
 		},
@@ -149,12 +150,13 @@ test('recoverCreatedPcbComponentFromHostError retries until the created componen
 
 test('recoverCreatedPcbComponentFromHostError returns undefined when no unique component appears', async () => {
 	const previousEda = globalThis.eda;
+	const previousPcbPrimitiveComponent = previousEda?.pcb_PrimitiveComponent;
 	let listCalls = 0;
 
 	globalThis.eda = {
-		...previousEda,
+		...(previousEda ?? {}),
 		pcb_PrimitiveComponent: {
-			...previousEda.pcb_PrimitiveComponent,
+			...(previousPcbPrimitiveComponent ?? {}),
 			getAllPrimitiveId: async () => {
 				listCalls += 1;
 				return ['e0'];
