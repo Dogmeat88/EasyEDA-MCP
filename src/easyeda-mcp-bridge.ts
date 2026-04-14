@@ -1214,6 +1214,7 @@ async function addPcbComponent(params: Record<string, unknown>): Promise<Record<
 	let primitive: unknown;
 	let recoveredFromError = false;
 	let recoveryError: string | undefined;
+	let primitiveReadbackRequired = false;
 
 	try {
 		primitive = await finalizeHostPrimitive(await eda.pcb_PrimitiveComponent.create(
@@ -1226,18 +1227,27 @@ async function addPcbComponent(params: Record<string, unknown>): Promise<Record<
 		));
 	}
 	catch (error: unknown) {
+		const hostErrorMessage = toErrorMessage(error);
 		primitive = await recoverCreatedPcbComponentFromHostError(previousPrimitiveIds, layer, primitiveLock);
+		if (!primitive && hostErrorMessage.includes('Cannot convert undefined or null to object')) {
+			primitive = { primitiveId: null };
+			recoveredFromError = true;
+			recoveryError = hostErrorMessage;
+			primitiveReadbackRequired = true;
+		}
+
 		if (!primitive)
 			throw error;
 
 		recoveredFromError = true;
-		recoveryError = toErrorMessage(error);
+		recoveryError = hostErrorMessage;
 	}
 
 	const saved = await savePcbDocumentIfRequested(currentDocument.uuid, getOptionalBoolean(params.saveAfter));
 
 	return {
 		primitive,
+		primitiveReadbackRequired,
 		recoveredFromError,
 		recoveryError,
 		saved,
@@ -2689,26 +2699,40 @@ async function listRecoverableSchematicComponentPrimitiveIds(): Promise<string[]
 	return await eda.sch_PrimitiveComponent.getAllPrimitiveId(undefined as never, undefined) ?? [];
 }
 
+async function getRecoverablePcbComponent(primitiveId: string): Promise<unknown> {
+	try {
+		return await eda.pcb_PrimitiveComponent.get(primitiveId);
+	}
+	catch {
+		try {
+			return await eda.pcb_Primitive.getPrimitiveByPrimitiveId(primitiveId);
+		}
+		catch {
+			return { primitiveId };
+		}
+	}
+}
+
 export async function recoverCreatedPcbComponentFromHostError(
 	previousPrimitiveIds: string[],
 	layer: TPCB_LayersOfComponent,
 	primitiveLock?: boolean,
 ): Promise<unknown | undefined> {
-	try {
-		for (let attempt = 0; attempt < 5; attempt += 1) {
+	for (let attempt = 0; attempt < 20; attempt += 1) {
+		try {
 			const nextPrimitiveIds = await listRecoverablePcbComponentPrimitiveIds(layer, primitiveLock);
 			const addedPrimitiveIds = findAddedPrimitiveIds(previousPrimitiveIds, nextPrimitiveIds);
 			if (addedPrimitiveIds.length === 1)
-				return await eda.pcb_PrimitiveComponent.get(addedPrimitiveIds[0]);
-
-			await delay(100);
+				return await getRecoverablePcbComponent(addedPrimitiveIds[0]);
+		}
+		catch {
+			// EasyEDA can briefly throw while a newly created component is still being indexed.
 		}
 
-		return undefined;
+		await delay(100);
 	}
-	catch {
-		return undefined;
-	}
+
+	return undefined;
 }
 
 async function recoverCreatedSchematicComponentFromHostError(

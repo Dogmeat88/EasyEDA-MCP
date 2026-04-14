@@ -169,7 +169,75 @@ test('recoverCreatedPcbComponentFromHostError returns undefined when no unique c
 
 	try {
 		assert.equal(await recoverCreatedPcbComponentFromHostError(['e0'], 'TopLayer' as never, undefined), undefined);
-		assert.equal(listCalls, 5);
+		assert.equal(listCalls, 20);
+	}
+	finally {
+		globalThis.eda = previousEda;
+	}
+});
+
+test('recoverCreatedPcbComponentFromHostError falls back when component getter stays unstable', async () => {
+	const previousEda = globalThis.eda;
+	const previousPcbPrimitive = previousEda?.pcb_Primitive;
+	const previousPcbPrimitiveComponent = previousEda?.pcb_PrimitiveComponent;
+	let listCalls = 0;
+
+	globalThis.eda = {
+		...(previousEda ?? {}),
+		pcb_Primitive: {
+			...(previousPcbPrimitive ?? {}),
+			getPrimitiveByPrimitiveId: async (primitiveId: string) => ({ primitiveId, recoveredVia: 'primitive' }),
+		},
+		pcb_PrimitiveComponent: {
+			...(previousPcbPrimitiveComponent ?? {}),
+			getAllPrimitiveId: async () => {
+				listCalls += 1;
+				return ['e0', 'e1'];
+			},
+			get: async () => {
+				throw new Error('Cannot convert undefined or null to object');
+			},
+		},
+	};
+
+	try {
+		assert.deepEqual(
+			await recoverCreatedPcbComponentFromHostError(['e0'], 'TopLayer' as never, undefined),
+			{ primitiveId: 'e1', recoveredVia: 'primitive' },
+		);
+		assert.equal(listCalls, 1);
+	}
+	finally {
+		globalThis.eda = previousEda;
+	}
+});
+
+test('recoverCreatedPcbComponentFromHostError tolerates transient list failures before the new primitive appears', async () => {
+	const previousEda = globalThis.eda;
+	const previousPcbPrimitiveComponent = previousEda?.pcb_PrimitiveComponent;
+	let listCalls = 0;
+
+	globalThis.eda = {
+		...(previousEda ?? {}),
+		pcb_PrimitiveComponent: {
+			...(previousPcbPrimitiveComponent ?? {}),
+			getAllPrimitiveId: async () => {
+				listCalls += 1;
+				if (listCalls === 1)
+					throw new Error('Transient host read failure');
+
+				return ['e0', 'e1'];
+			},
+			get: async (primitiveId: string) => ({ primitiveId, designator: 'U1' }),
+		},
+	};
+
+	try {
+		assert.deepEqual(
+			await recoverCreatedPcbComponentFromHostError(['e0'], 'TopLayer' as never, undefined),
+			{ primitiveId: 'e1', designator: 'U1' },
+		);
+		assert.equal(listCalls, 2);
 	}
 	finally {
 		globalThis.eda = previousEda;
