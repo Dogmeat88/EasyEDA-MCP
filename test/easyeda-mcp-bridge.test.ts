@@ -8,6 +8,7 @@ import { getSchematicNetLabelCapabilitySummary } from '../src/bridge-runtime-cap
 import { allocateBridgeSocketId, shouldHandleBridgeSocketCallback } from '../src/bridge-socket-lifecycle';
 import {
 	buildEmptyPcbImportCompareMapFromSchematicNetlist,
+	recoverCreatedPcbComponentFromHostError,
 	shouldAttemptBridgeWatchdogReconnect,
 	shouldUseHostUiImportFallback,
 } from '../src/easyeda-mcp-bridge';
@@ -113,6 +114,64 @@ test('buildSchematicPinStubLine honors explicit offsets as direct relative endpo
 test('findAddedPrimitiveIds returns only newly created primitive ids in order', () => {
 	assert.deepEqual(findAddedPrimitiveIds(['e0', 'e1'], ['e0', 'e1', 'e2', 'e4']), ['e2', 'e4']);
 	assert.deepEqual(findAddedPrimitiveIds(['e0', 'e1'], ['e0', 'e1']), []);
+});
+
+test('recoverCreatedPcbComponentFromHostError retries until the created component becomes visible', async () => {
+	const previousEda = globalThis.eda;
+	const primitiveIdsByAttempt = [
+		['e0'],
+		['e0'],
+		['e0', 'e1'],
+	];
+	let listCalls = 0;
+	const recoveredPrimitive = { primitiveId: 'e1', designator: 'U1' };
+
+	globalThis.eda = {
+		...previousEda,
+		pcb_PrimitiveComponent: {
+			...previousEda.pcb_PrimitiveComponent,
+			getAllPrimitiveId: async () => primitiveIdsByAttempt[Math.min(listCalls++, primitiveIdsByAttempt.length - 1)],
+			get: async (primitiveId: string) => ({ ...recoveredPrimitive, primitiveId }),
+		},
+	};
+
+	try {
+		assert.deepEqual(
+			await recoverCreatedPcbComponentFromHostError(['e0'], 'TopLayer' as never, undefined),
+			recoveredPrimitive,
+		);
+		assert.equal(listCalls, 3);
+	}
+	finally {
+		globalThis.eda = previousEda;
+	}
+});
+
+test('recoverCreatedPcbComponentFromHostError returns undefined when no unique component appears', async () => {
+	const previousEda = globalThis.eda;
+	let listCalls = 0;
+
+	globalThis.eda = {
+		...previousEda,
+		pcb_PrimitiveComponent: {
+			...previousEda.pcb_PrimitiveComponent,
+			getAllPrimitiveId: async () => {
+				listCalls += 1;
+				return ['e0'];
+			},
+			get: async () => {
+				throw new Error('Should not fetch a component when no unique primitive was added');
+			},
+		},
+	};
+
+	try {
+		assert.equal(await recoverCreatedPcbComponentFromHostError(['e0'], 'TopLayer' as never, undefined), undefined);
+		assert.equal(listCalls, 5);
+	}
+	finally {
+		globalThis.eda = previousEda;
+	}
 });
 
 test('resolvePcbLineNetForCreate defaults board outline lines to an empty net', () => {

@@ -1216,14 +1216,14 @@ async function addPcbComponent(params: Record<string, unknown>): Promise<Record<
 	let recoveryError: string | undefined;
 
 	try {
-		primitive = await eda.pcb_PrimitiveComponent.create(
+		primitive = await finalizeHostPrimitive(await eda.pcb_PrimitiveComponent.create(
 			deviceReference,
 			layer,
 			x,
 			y,
 			rotation,
 			primitiveLock,
-		);
+		));
 	}
 	catch (error: unknown) {
 		primitive = await recoverCreatedPcbComponentFromHostError(previousPrimitiveIds, layer, primitiveLock);
@@ -2689,18 +2689,22 @@ async function listRecoverableSchematicComponentPrimitiveIds(): Promise<string[]
 	return await eda.sch_PrimitiveComponent.getAllPrimitiveId(undefined as never, undefined) ?? [];
 }
 
-async function recoverCreatedPcbComponentFromHostError(
+export async function recoverCreatedPcbComponentFromHostError(
 	previousPrimitiveIds: string[],
 	layer: TPCB_LayersOfComponent,
 	primitiveLock?: boolean,
 ): Promise<unknown | undefined> {
 	try {
-		const nextPrimitiveIds = await listRecoverablePcbComponentPrimitiveIds(layer, primitiveLock);
-		const addedPrimitiveIds = findAddedPrimitiveIds(previousPrimitiveIds, nextPrimitiveIds);
-		if (addedPrimitiveIds.length !== 1)
-			return undefined;
+		for (let attempt = 0; attempt < 5; attempt += 1) {
+			const nextPrimitiveIds = await listRecoverablePcbComponentPrimitiveIds(layer, primitiveLock);
+			const addedPrimitiveIds = findAddedPrimitiveIds(previousPrimitiveIds, nextPrimitiveIds);
+			if (addedPrimitiveIds.length === 1)
+				return await eda.pcb_PrimitiveComponent.get(addedPrimitiveIds[0]);
 
-		return await eda.pcb_Primitive.getPrimitiveByPrimitiveId(addedPrimitiveIds[0]);
+			await delay(100);
+		}
+
+		return undefined;
 	}
 	catch {
 		return undefined;
