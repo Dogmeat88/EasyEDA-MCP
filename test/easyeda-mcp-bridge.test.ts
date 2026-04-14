@@ -720,6 +720,27 @@ test('getOpenDocumentBootstrapFailure stays silent for healthy editor contexts',
 	}, 'pcb-1'), undefined);
 });
 
+test('getOpenDocumentBootstrapFailure reports a fast-fail error when the requested tab never hydrates', () => {
+	const message = getOpenDocumentBootstrapFailure({
+		currentDocument: {
+			documentType: 1,
+			uuid: 'sch-1',
+		},
+		editorBootstrapState: {
+			requestedProjectUuid: 'project-1',
+			requestedTabIds: ['*pcb-1@project-1'],
+			activeRequestedTab: 'pcb-1@project-1',
+			requestedActiveTabMissing: true,
+			visibleTabIds: ['tab_page1', 'sch-1@project-1'],
+			suspectedBootstrapFailure: true,
+		},
+	}, 'pcb-1');
+
+	assert.match(message ?? '', /has not hydrated the requested tab pcb-1@project-1/);
+	assert.match(message ?? '', /current document is sch-1/);
+	assert.match(message ?? '', /visible tabs are tab_page1, sch-1@project-1/);
+});
+
 test('describeEditorBootstrapState flags project-targeted start page shells as bootstrap failures', () => {
 	assert.deepEqual(
 		describeEditorBootstrapState(
@@ -732,8 +753,53 @@ test('describeEditorBootstrapState flags project-targeted start page shells as b
 			urlHash: '#id=project-1,tab=*pcb-1@project-1|sch-1@project-1',
 			requestedProjectUuid: 'project-1',
 			requestedTabIds: ['*pcb-1@project-1', 'sch-1@project-1'],
+			activeRequestedTab: 'pcb-1@project-1',
+			requestedActiveTabMissing: true,
+			visibleTabIds: ['tab_page1'],
 			suspectedBootstrapFailure: true,
 			warning: 'EasyEDA is still showing only Start Page even though the URL targets a project or document. Project bootstrap likely failed in this session.',
+		},
+	);
+});
+
+test('describeEditorBootstrapState flags start-page sentinel shells as bootstrap failures', () => {
+	assert.deepEqual(
+		describeEditorBootstrapState(
+			{ uuid: '0' },
+			{ tabs: [{ tabId: 'tab_page1' }] },
+			'#id=project-1,tab=*pcb-1@project-1',
+		),
+		{
+			startPageOnly: true,
+			urlHash: '#id=project-1,tab=*pcb-1@project-1',
+			requestedProjectUuid: 'project-1',
+			requestedTabIds: ['*pcb-1@project-1'],
+			activeRequestedTab: 'pcb-1@project-1',
+			requestedActiveTabMissing: true,
+			visibleTabIds: ['tab_page1'],
+			suspectedBootstrapFailure: true,
+			warning: 'EasyEDA is still showing only Start Page even though the URL targets a project or document. Project bootstrap likely failed in this session.',
+		},
+	);
+});
+
+test('describeEditorBootstrapState flags requested tabs that never appear in the split-screen tree', () => {
+	assert.deepEqual(
+		describeEditorBootstrapState(
+			{ uuid: 'sch-1' },
+			{ tabs: [{ tabId: 'tab_page1' }, { tabId: 'sch-1@project-1' }] },
+			'#id=project-1,tab=*pcb-1@project-1|sch-1@project-1',
+		),
+		{
+			startPageOnly: false,
+			urlHash: '#id=project-1,tab=*pcb-1@project-1|sch-1@project-1',
+			requestedProjectUuid: 'project-1',
+			requestedTabIds: ['*pcb-1@project-1', 'sch-1@project-1'],
+			activeRequestedTab: 'pcb-1@project-1',
+			requestedActiveTabMissing: true,
+			visibleTabIds: ['tab_page1', 'sch-1@project-1'],
+			suspectedBootstrapFailure: true,
+			warning: 'EasyEDA URL targets tab pcb-1@project-1, but the split-screen tree never hydrated that tab. Editor bootstrap likely failed or the host document state is stale in this session.',
 		},
 	);
 });
