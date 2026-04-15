@@ -3,10 +3,12 @@ import test from 'node:test';
 
 import { computeSourceRevision } from '../src/mcp-bridge-protocol';
 import {
+	addPcbViaInputSchema,
 	addPcbLineInputSchema,
 	deleteBoardInputSchema,
 	deletePrimitiveInputSchema,
 	easyedaToolNames,
+	modifyPcbViaInputSchema,
 	runPcbDrcInputSchema,
 	modifyPcbLineInputSchema,
 	registerEasyedaTools,
@@ -71,6 +73,7 @@ test('registerEasyedaTools registers the full MCP surface including component, q
 	assert.ok(registeredTools.some(tool => tool.name === 'list_pcb_component_pads'));
 	assert.ok(registeredTools.some(tool => tool.name === 'route_pcb_line_between_component_pads'));
 	assert.ok(registeredTools.some(tool => tool.name === 'route_pcb_lines_between_component_pads'));
+	assert.ok(registeredTools.some(tool => tool.name === 'add_pcb_via'));
 	assert.ok(registeredTools.some(tool => tool.name === 'get_pcb_net'));
 	assert.ok(registeredTools.some(tool => tool.name === 'run_pcb_drc'));
 	assert.ok(registeredTools.some(tool => tool.name === 'add_schematic_net_label'));
@@ -247,6 +250,74 @@ test('pcb line schemas allow omitted or empty net values for board outline workf
 			net: 'GND',
 		});
 	});
+});
+
+test('pcb via schemas validate supported via creation and modification inputs', () => {
+	assert.doesNotThrow(() => {
+		addPcbViaInputSchema.parse({
+			net: 'GND',
+			x: 100,
+			y: 200,
+			holeDiameter: 12,
+			diameter: 24,
+			viaType: 'VIA',
+		});
+	});
+
+	assert.doesNotThrow(() => {
+		modifyPcbViaInputSchema.parse({
+			primitiveId: 'e42',
+			diameter: 26,
+			viaType: 'SUTURE',
+			designRuleBlindViaName: null,
+		});
+	});
+
+	assert.throws(() => {
+		addPcbViaInputSchema.parse({
+			net: 'GND',
+			x: 100,
+			y: 200,
+			holeDiameter: 0,
+			diameter: 24,
+		});
+	}, />0/);
+});
+
+test('add_pcb_via forwards the bridge result', async () => {
+	const expectedResult = {
+		primitive: {
+			primitiveId: 'e77',
+			net: 'GND',
+		},
+		saved: true,
+	};
+	const registeredTools = createRegisteredTools({
+		async call(method, params) {
+			if (method === 'add_pcb_via') {
+				assert.deepEqual(params, {
+					net: 'GND',
+					x: 100,
+					y: 200,
+					holeDiameter: 12,
+					diameter: 24,
+					viaType: 'VIA',
+					saveAfter: true,
+				});
+				return expectedResult;
+			}
+
+			return { method, params };
+		},
+		getConnectionState() {
+			return { connected: true };
+		},
+	});
+	const addPcbViaTool = registeredTools.find(tool => tool.name === 'add_pcb_via');
+
+	assert.ok(addPcbViaTool);
+	const result = await addPcbViaTool.handler({ net: 'GND', x: 100, y: 200, holeDiameter: 12, diameter: 24, viaType: 'VIA', saveAfter: true }) as { structuredContent: Record<string, unknown> };
+	assert.deepEqual(result.structuredContent, expectedResult);
 });
 
 test('set_document_source recovers when EasyEDA applies the source before the bridge response times out', async () => {

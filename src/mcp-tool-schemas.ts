@@ -214,6 +214,20 @@ export const addPcbLineInputSchema = z.object({
 	saveAfter: z.boolean().optional(),
 });
 
+export const pcbViaTypeSchema = z.enum(['VIA', 'BLIND', 'SUTURE']);
+
+export const addPcbViaInputSchema = z.object({
+	net: z.string().min(1),
+	x: z.number(),
+	y: z.number(),
+	holeDiameter: z.number().positive(),
+	diameter: z.number().positive(),
+	viaType: pcbViaTypeSchema.optional(),
+	designRuleBlindViaName: z.string().min(1).nullable().optional(),
+	primitiveLock: z.boolean().optional(),
+	saveAfter: z.boolean().optional(),
+});
+
 export const addPcbComponentInputSchema = z.object({
 	libraryUuid: z.string().min(1),
 	deviceUuid: z.string().min(1),
@@ -341,6 +355,19 @@ export const modifyPcbLineInputSchema = z.object({
 	saveAfter: z.boolean().optional(),
 });
 
+export const modifyPcbViaInputSchema = z.object({
+	primitiveId: z.string().min(1),
+	net: z.string().min(1).optional(),
+	x: z.number().optional(),
+	y: z.number().optional(),
+	holeDiameter: z.number().positive().optional(),
+	diameter: z.number().positive().optional(),
+	viaType: pcbViaTypeSchema.optional(),
+	designRuleBlindViaName: z.string().min(1).nullable().optional(),
+	primitiveLock: z.boolean().optional(),
+	saveAfter: z.boolean().optional(),
+});
+
 export const modifyPcbTextInputSchema = z.object({
 	primitiveId: z.string().min(1),
 	layer: z.string().min(1).optional(),
@@ -386,7 +413,7 @@ export const listSchematicPrimitiveIdsInputSchema = z.object({
 });
 
 export const listPcbPrimitiveIdsInputSchema = z.object({
-	family: z.enum(['line', 'text', 'component']),
+	family: z.enum(['line', 'text', 'component', 'via']),
 	net: z.string().min(1).optional(),
 	layer: z.string().min(1).optional(),
 	primitiveLock: z.boolean().optional(),
@@ -533,6 +560,7 @@ export const easyedaToolNames = [
 	'list_pcb_component_pads',
 	'route_pcb_line_between_component_pads',
 	'route_pcb_lines_between_component_pads',
+	'add_pcb_via',
 	'add_pcb_line',
 	'add_pcb_text',
 	'list_pcb_primitive_ids',
@@ -548,6 +576,8 @@ export const easyedaToolNames = [
 	'modify_schematic_net_label',
 	'modify_schematic_wire',
 	'delete_schematic_wire',
+	'modify_pcb_via',
+	'delete_pcb_via',
 	'modify_pcb_line',
 	'delete_pcb_line',
 	'modify_pcb_text',

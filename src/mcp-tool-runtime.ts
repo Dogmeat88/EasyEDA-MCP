@@ -237,6 +237,11 @@ function createToolRegistrations(bridgeSession: EasyedaBridgeCaller): ToolRegist
 			handler: async args => makeToolResult(await bridgeSession.call('route_pcb_lines_between_component_pads', args)),
 		},
 		{
+			name: 'add_pcb_via',
+			config: { description: 'Add a via primitive to the active PCB document.', inputSchema: schemas.addPcbViaInputSchema },
+			handler: async args => makeToolResult(await bridgeSession.call('add_pcb_via', args)),
+		},
+		{
 			name: 'add_pcb_line',
 			config: { description: 'Add a line primitive to the active PCB document.', inputSchema: schemas.addPcbLineInputSchema },
 			handler: async args => makeToolResult(await bridgeSession.call('add_pcb_line', args)),
@@ -310,6 +315,16 @@ function createToolRegistrations(bridgeSession: EasyedaBridgeCaller): ToolRegist
 			name: 'delete_schematic_wire',
 			config: { description: 'Delete a wire primitive from the active schematic page. Set skipConfirmation to true to suppress the bridge-side delete prompt.', inputSchema: schemas.deletePrimitiveInputSchema },
 			handler: async args => makeToolResult(await bridgeSession.call('delete_schematic_wire', args)),
+		},
+		{
+			name: 'modify_pcb_via',
+			config: { description: 'Modify a via primitive in the active PCB document.', inputSchema: schemas.modifyPcbViaInputSchema },
+			handler: async args => makeToolResult(await bridgeSession.call('modify_pcb_via', args)),
+		},
+		{
+			name: 'delete_pcb_via',
+			config: { description: 'Delete a via primitive from the active PCB document. Set skipConfirmation to true to suppress the bridge-side delete prompt.', inputSchema: schemas.deletePrimitiveInputSchema },
+			handler: async args => makeToolResult(await bridgeSession.call('delete_pcb_via', args)),
 		},
 		{
 			name: 'modify_pcb_line',

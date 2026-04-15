@@ -407,6 +407,8 @@ async function dispatchMethod(method: BridgeMethod, params: Record<string, unkno
 			return routePcbLineBetweenComponentPads(params);
 		case 'route_pcb_lines_between_component_pads':
 			return routePcbLinesBetweenComponentPads(params);
+		case 'add_pcb_via':
+			return addPcbVia(params);
 		case 'add_pcb_line':
 			return addPcbLine(params);
 		case 'add_pcb_text':
@@ -437,6 +439,10 @@ async function dispatchMethod(method: BridgeMethod, params: Record<string, unkno
 			return modifySchematicWire(params);
 		case 'delete_schematic_wire':
 			return deleteSchematicWire(params);
+		case 'modify_pcb_via':
+			return modifyPcbVia(params);
+		case 'delete_pcb_via':
+			return deletePcbVia(params);
 		case 'modify_pcb_line':
 			return modifyPcbLine(params);
 		case 'delete_pcb_line':
@@ -1493,6 +1499,28 @@ async function addPcbLine(params: Record<string, unknown>): Promise<Record<strin
 	};
 }
 
+async function addPcbVia(params: Record<string, unknown>): Promise<Record<string, unknown>> {
+	await requireCurrentDocumentType(EDMT_EditorDocumentType.PCB, 'PCB document required for PCB via');
+	const currentDocument = await requireCurrentDocument();
+	const primitive = await eda.pcb_PrimitiveVia.create(
+		getRequiredString(params.net, 'net'),
+		getRequiredNumber(params.x, 'x'),
+		getRequiredNumber(params.y, 'y'),
+		getRequiredNumber(params.holeDiameter, 'holeDiameter'),
+		getRequiredNumber(params.diameter, 'diameter'),
+		getOptionalPcbViaType(params.viaType),
+		getOptionalNullableString(params.designRuleBlindViaName),
+		undefined,
+		getOptionalBoolean(params.primitiveLock),
+	);
+	const saved = getOptionalBoolean(params.saveAfter) ? await eda.pcb_Document.save(currentDocument.uuid) : undefined;
+
+	return {
+		primitive,
+		saved,
+	};
+}
+
 async function listPcbPrimitiveIds(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	await requireCurrentDocumentType(EDMT_EditorDocumentType.PCB, 'PCB document required for PCB primitive queries');
 	const family = getRequiredString(params.family, 'family');
@@ -1520,6 +1548,12 @@ async function listPcbPrimitiveIds(params: Record<string, unknown>): Promise<Rec
 		case 'component':
 			primitiveIds = await eda.pcb_PrimitiveComponent.getAllPrimitiveId(
 				coerceOptionalHostValue<TPCB_LayersOfComponent>(getOptionalString(params.layer)),
+				getOptionalBoolean(params.primitiveLock),
+			);
+			break;
+		case 'via':
+			primitiveIds = await eda.pcb_PrimitiveVia.getAllPrimitiveId(
+				getOptionalString(params.net),
 				getOptionalBoolean(params.primitiveLock),
 			);
 			break;
@@ -1734,6 +1768,28 @@ async function deleteSchematicWire(params: Record<string, unknown>): Promise<Rec
 	};
 }
 
+async function modifyPcbVia(params: Record<string, unknown>): Promise<Record<string, unknown>> {
+	const currentDocument = await requireCurrentDocumentType(EDMT_EditorDocumentType.PCB, 'PCB document required for PCB via');
+	const primitiveId = getRequiredString(params.primitiveId, 'primitiveId');
+	const primitive = await eda.pcb_PrimitiveVia.modify(primitiveId, {
+		net: getOptionalString(params.net),
+		x: getOptionalNumber(params.x),
+		y: getOptionalNumber(params.y),
+		holeDiameter: getOptionalNumber(params.holeDiameter),
+		diameter: getOptionalNumber(params.diameter),
+		viaType: getOptionalPcbViaType(params.viaType),
+		designRuleBlindViaName: getOptionalNullableString(params.designRuleBlindViaName),
+		primitiveLock: getOptionalBoolean(params.primitiveLock),
+	});
+	const saved = await savePcbDocumentIfRequested(currentDocument.uuid, getOptionalBoolean(params.saveAfter));
+
+	return {
+		primitiveId,
+		primitive,
+		saved,
+	};
+}
+
 async function modifyPcbLine(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	const currentDocument = await requireCurrentDocumentType(EDMT_EditorDocumentType.PCB, 'PCB document required for PCB line');
 	const primitiveId = getRequiredString(params.primitiveId, 'primitiveId');
@@ -1753,6 +1809,20 @@ async function modifyPcbLine(params: Record<string, unknown>): Promise<Record<st
 	return {
 		primitiveId,
 		primitive,
+		saved,
+	};
+}
+
+async function deletePcbVia(params: Record<string, unknown>): Promise<Record<string, unknown>> {
+	const currentDocument = await requireCurrentDocumentType(EDMT_EditorDocumentType.PCB, 'PCB document required for PCB via deletion');
+	const primitiveId = getRequiredString(params.primitiveId, 'primitiveId');
+	await maybeConfirmDestructiveAction(params, 'Delete PCB Via', `Delete PCB via primitive ${primitiveId}?`, 'Delete');
+	const deleted = await eda.pcb_PrimitiveVia.delete(primitiveId);
+	const saved = await savePcbDocumentIfRequested(currentDocument.uuid, getOptionalBoolean(params.saveAfter));
+
+	return {
+		primitiveId,
+		deleted,
 		saved,
 	};
 }
@@ -2044,6 +2114,7 @@ function getSupportedMethods(): BridgeMethod[] {
 		'list_pcb_component_pads',
 		'route_pcb_line_between_component_pads',
 		'route_pcb_lines_between_component_pads',
+		'add_pcb_via',
 		'add_pcb_line',
 		'add_pcb_text',
 		'list_pcb_primitive_ids',
@@ -2059,6 +2130,8 @@ function getSupportedMethods(): BridgeMethod[] {
 		'modify_schematic_net_label',
 		'modify_schematic_wire',
 		'delete_schematic_wire',
+		'modify_pcb_via',
+		'delete_pcb_via',
 		'modify_pcb_line',
 		'delete_pcb_line',
 		'modify_pcb_text',
@@ -2632,6 +2705,22 @@ function getRequiredNumber(value: unknown, key: string): number {
 		throw new Error(`Expected a valid number for ${key}`);
 
 	return value;
+}
+
+function getOptionalPcbViaType(value: unknown): EPCB_PrimitiveViaType | undefined {
+	if (value === undefined)
+		return undefined;
+
+	if (value === 'VIA')
+		return EPCB_PrimitiveViaType.VIA;
+
+	if (value === 'BLIND')
+		return EPCB_PrimitiveViaType.BLIND;
+
+	if (value === 'SUTURE')
+		return EPCB_PrimitiveViaType.SUTURE;
+
+	throw new Error('Expected viaType to be one of VIA, BLIND, or SUTURE');
 }
 
 function coerceHostValue<T>(value: unknown): T {
