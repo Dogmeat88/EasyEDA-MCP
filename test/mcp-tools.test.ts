@@ -857,6 +857,67 @@ test('delete_pcb_line recovers when timeout leaves the primitive in source', asy
 	assert.equal(setDocumentSourceCall?.params?.expectedSourceHash, originalSourceHash);
 });
 
+test('delete_pcb_line rewrites source when primitive inventory drops the id but source still contains the line', async () => {
+	const originalSource = [
+		'["DOCTYPE","PCB","1.8"]',
+		'["POLY","e11",0,"AC_L_FUSED",1,20,[0,0,"L",100,0],0]',
+		'["POLY","e17",0,"AC_N",1,20,[0,10,"L",100,10],0]',
+	].join('\n');
+	const originalSourceHash = computeSourceRevision(originalSource);
+	let updatedSource = originalSource;
+	const registeredTools = createRegisteredTools({
+		async call(method, params) {
+			if (method === 'delete_pcb_line')
+				return { primitiveId: 'e11', deleted: true, saved: false };
+
+			if (method === 'list_pcb_primitive_ids') {
+				return {
+					family: params?.family,
+					primitiveIds: ['e17'],
+				};
+			}
+
+			if (method === 'get_document_source') {
+				return {
+					source: updatedSource,
+					sourceHash: computeSourceRevision(updatedSource),
+					characters: updatedSource.length,
+				};
+			}
+
+			if (method === 'set_document_source') {
+				updatedSource = String(params?.source ?? '');
+				return {
+					updated: true,
+					characters: updatedSource.length,
+					sourceHash: computeSourceRevision(updatedSource),
+					previousSourceHash: originalSourceHash,
+				};
+			}
+
+			return { method, params };
+		},
+		getConnectionState() {
+			return { connected: true };
+		},
+	});
+	const deleteTool = registeredTools.find(tool => tool.name === 'delete_pcb_line');
+
+	assert.ok(deleteTool);
+	const result = await deleteTool.handler({
+		primitiveId: 'e11',
+		skipConfirmation: true,
+	}) as { structuredContent: Record<string, unknown> };
+
+	assert.equal(result.structuredContent.deleted, true);
+	assert.equal(result.structuredContent.readbackVerified, true);
+	assert.equal(result.structuredContent.sourceRewriteRecovered, true);
+	assert.equal(result.structuredContent.postDeleteLinePresent, false);
+	assert.equal(updatedSource.includes('["POLY","e11"'), false);
+	assert.equal(updatedSource.includes('["POLY","e17"'), true);
+	assert.equal(result.structuredContent.previousSourceHash, originalSourceHash);
+});
+
 test('list_project_objects normalizes schematic and page names from title block metadata', async () => {
 	const registeredTools = createRegisteredTools({
 		async call(method, params) {

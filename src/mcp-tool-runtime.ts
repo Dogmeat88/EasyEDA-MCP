@@ -501,6 +501,21 @@ function removePcbLineFromSource(source: string, primitiveId: string): string | 
 	return filtered.join('\n');
 }
 
+function hasPcbLineInSource(source: string, primitiveId: string): boolean {
+	const lineTags = new Set(['POLY', 'TRACK', 'LINE']);
+	for (const line of source.split('\n')) {
+		const parsed = parseSourceLine(line);
+		if (!parsed)
+			continue;
+
+		const tag = parsed[0];
+		if (typeof tag === 'string' && lineTags.has(tag) && parsed[1] === primitiveId)
+			return true;
+	}
+
+	return false;
+}
+
 async function getDocumentSourceSnapshot(bridgeSession: EasyedaBridgeCaller): Promise<{
 	source: string;
 	sourceHash: string;
@@ -837,7 +852,8 @@ async function callDeletePcbLineWithRecovery(
 			return bridgeResult;
 
 		const linePrimitiveIds = await listPcbLinePrimitiveIds(bridgeSession);
-		if (linePrimitiveIds && !linePrimitiveIds.includes(primitiveId)) {
+		const currentDocumentSource = await getDocumentSourceSnapshot(bridgeSession);
+		if (linePrimitiveIds && !linePrimitiveIds.includes(primitiveId) && !hasPcbLineInSource(currentDocumentSource.source, primitiveId)) {
 			return {
 				...bridgeResult,
 				primitiveId,
@@ -845,6 +861,7 @@ async function callDeletePcbLineWithRecovery(
 				postDeleteLinePresent: false,
 				readbackVerified: true,
 				hostReportedDeleted: bridgeResult.deleted,
+				sourceHash: currentDocumentSource.sourceHash,
 			};
 		}
 
@@ -873,14 +890,16 @@ async function callDeletePcbLineWithRecovery(
 			throw error;
 
 		const linePrimitiveIds = await listPcbLinePrimitiveIds(bridgeSession);
+		const currentDocumentSource = await getDocumentSourceSnapshot(bridgeSession);
 
-		if (linePrimitiveIds && !linePrimitiveIds.includes(primitiveId)) {
+		if (linePrimitiveIds && !linePrimitiveIds.includes(primitiveId) && !hasPcbLineInSource(currentDocumentSource.source, primitiveId)) {
 			return {
 				primitiveId,
 				deleted: true,
 				timeoutRecovered: true,
 				readbackVerified: true,
 				postDeleteLinePresent: false,
+				sourceHash: currentDocumentSource.sourceHash,
 			};
 		}
 
