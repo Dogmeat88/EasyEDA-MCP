@@ -404,6 +404,11 @@ export const getPcbNetInputSchema = z.object({
 	net: z.string().min(1),
 });
 
+export const runPcbDrcInputSchema = z.object({
+	strict: z.boolean().optional(),
+	showUi: z.boolean().optional(),
+});
+
 export const setPcbNetColorInputSchema = z.object({
 	net: z.string().min(1),
 	color: z.object({
@@ -534,6 +539,7 @@ export const easyedaToolNames = [
 	'get_pcb_primitive',
 	'get_pcb_primitives_bbox',
 	'list_pcb_nets',
+	'run_pcb_drc',
 	'get_pcb_net',
 	'set_pcb_net_color',
 	'get_pcb_net_primitives',

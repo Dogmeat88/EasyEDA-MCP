@@ -9,6 +9,7 @@ import { allocateBridgeSocketId, shouldHandleBridgeSocketCallback } from '../src
 import {
 	buildEmptyPcbImportCompareMapFromSchematicNetlist,
 	recoverCreatedPcbComponentFromHostError,
+	summarizePcbDrcResult,
 	shouldAttemptBridgeWatchdogReconnect,
 	shouldUseHostUiImportFallback,
 } from '../src/easyeda-mcp-bridge';
@@ -257,6 +258,48 @@ test('getOptionalTrimmedStringIncludingEmpty preserves empty strings so pcb line
 	assert.equal(getOptionalTrimmedStringIncludingEmpty(''), '');
 	assert.equal(getOptionalTrimmedStringIncludingEmpty('   '), '');
 	assert.equal(getOptionalTrimmedStringIncludingEmpty(undefined), undefined);
+});
+
+test('summarizePcbDrcResult returns grouped category counts from nested verbose DRC output', () => {
+	assert.deepEqual(
+		summarizePcbDrcResult([
+			{
+				title: 'Connection Error',
+				children: [
+					{ id: 'c1' },
+					{ id: 'c2' },
+				],
+			},
+			{
+				title: 'Physical Error',
+				children: [
+					{ id: 'p1' },
+				],
+			},
+		]),
+		{
+			issueCount: 3,
+			categories: [
+				{ label: 'Connection Error', count: 2 },
+				{ label: 'Physical Error', count: 1 },
+			],
+		},
+	);
+});
+
+test('summarizePcbDrcResult falls back to a flat issue bucket when the host returns uncategorized details', () => {
+	assert.deepEqual(
+		summarizePcbDrcResult([
+			{ message: 'issue-1' },
+			{ message: 'issue-2' },
+		]),
+		{
+			issueCount: 2,
+			categories: [
+				{ label: 'Issues', count: 2 },
+			],
+		},
+	);
 });
 
 test('getSchematicNetLabelCapabilitySummary reports live host limitations and fallbacks', () => {

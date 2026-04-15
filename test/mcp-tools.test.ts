@@ -7,6 +7,7 @@ import {
 	deleteBoardInputSchema,
 	deletePrimitiveInputSchema,
 	easyedaToolNames,
+	runPcbDrcInputSchema,
 	modifyPcbLineInputSchema,
 	registerEasyedaTools,
 	searchLibraryDevicesInputSchema,
@@ -71,6 +72,7 @@ test('registerEasyedaTools registers the full MCP surface including component, q
 	assert.ok(registeredTools.some(tool => tool.name === 'route_pcb_line_between_component_pads'));
 	assert.ok(registeredTools.some(tool => tool.name === 'route_pcb_lines_between_component_pads'));
 	assert.ok(registeredTools.some(tool => tool.name === 'get_pcb_net'));
+	assert.ok(registeredTools.some(tool => tool.name === 'run_pcb_drc'));
 	assert.ok(registeredTools.some(tool => tool.name === 'add_schematic_net_label'));
 	assert.ok(registeredTools.some(tool => tool.name === 'add_pcb_text'));
 	assert.ok(registeredTools.some(tool => tool.name === 'modify_schematic_text'));
@@ -129,6 +131,47 @@ test('searchLibraryDevicesInputSchema requires a query or lcscIds', () => {
 	assert.doesNotThrow(() => {
 		searchLibraryDevicesInputSchema.parse({ lcscIds: ['C12345'] });
 	});
+});
+
+test('runPcbDrcInputSchema accepts omitted flags and boolean overrides', () => {
+	assert.doesNotThrow(() => {
+		runPcbDrcInputSchema.parse({});
+	});
+
+	assert.doesNotThrow(() => {
+		runPcbDrcInputSchema.parse({
+			strict: false,
+			showUi: true,
+		});
+	});
+});
+
+test('run_pcb_drc forwards the bridge result', async () => {
+	const expectedResult = {
+		passed: false,
+		issueCount: 2,
+		categories: [
+			{ label: 'Connection Error', count: 2 },
+		],
+	};
+	const registeredTools = createRegisteredTools({
+		async call(method, params) {
+			if (method === 'run_pcb_drc') {
+				assert.deepEqual(params, { strict: false, showUi: true });
+				return expectedResult;
+			}
+
+			return { method, params };
+		},
+		getConnectionState() {
+			return { connected: true };
+		},
+	});
+	const runPcbDrcTool = registeredTools.find(tool => tool.name === 'run_pcb_drc');
+
+	assert.ok(runPcbDrcTool);
+	const result = await runPcbDrcTool.handler({ strict: false, showUi: true }) as { structuredContent: Record<string, unknown> };
+	assert.deepEqual(result.structuredContent, expectedResult);
 });
 
 test('setDocumentSourceInputSchema requires either expectedSourceHash or force', () => {

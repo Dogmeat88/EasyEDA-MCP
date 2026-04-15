@@ -65,6 +65,8 @@ let bridgeSocketSequence = 0;
 
 const PCB_TEXT_HOST_TIMEOUT_MS = 4_000;
 const PCB_TEXT_HOST_TIMEOUT_HINT = 'This EasyEDA host session is not responding to pcb_PrimitiveString APIs. PCB text tools are unavailable in this session. Try reopening the PCB document or restarting the EasyEDA extension host.';
+const PCB_DRC_HOST_TIMEOUT_MS = 60_000;
+const PCB_DRC_HOST_TIMEOUT_HINT = 'EasyEDA PCB DRC did not finish in time. Try reopening the PCB document or rerun DRC with the EasyEDA UI visible if the host is still busy.';
 const SCHEMATIC_COMPONENT_HOST_TIMEOUT_MS = 45_000;
 const SCHEMATIC_COMPONENT_HOST_TIMEOUT_HINT = 'EasyEDA schematic component placement is taking too long in this session. The bridge will verify whether the component was created before failing.';
 const BRIDGE_WATCHDOG_INTERVAL_MS = 5_000;
@@ -417,6 +419,8 @@ async function dispatchMethod(method: BridgeMethod, params: Record<string, unkno
 			return getPcbPrimitivesBBox(params);
 		case 'list_pcb_nets':
 			return listPcbNets();
+		case 'run_pcb_drc':
+			return runPcbDrc(params);
 		case 'get_pcb_net':
 			return getPcbNet(params);
 		case 'set_pcb_net_color':
@@ -1563,6 +1567,29 @@ async function listPcbNets(): Promise<Record<string, unknown>> {
 	};
 }
 
+async function runPcbDrc(params: Record<string, unknown>): Promise<Record<string, unknown>> {
+	await requireCurrentDocumentType(EDMT_EditorDocumentType.PCB, 'PCB document required for PCB DRC');
+	const strict = getOptionalBoolean(params.strict) ?? true;
+	const showUi = getOptionalBoolean(params.showUi) ?? false;
+	const rawResult = await withHostMethodTimeout(
+		'eda.pcb_Drc.check',
+		PCB_DRC_HOST_TIMEOUT_MS,
+		() => eda.pcb_Drc.check(strict, showUi, true),
+		PCB_DRC_HOST_TIMEOUT_HINT,
+	);
+	const summary = summarizePcbDrcResult(rawResult);
+
+	return {
+		strict,
+		showUi,
+		passed: summary.issueCount === 0,
+		issueCount: summary.issueCount,
+		categoryCount: summary.categories.length,
+		categories: summary.categories,
+		rawResult,
+	};
+}
+
 async function getPcbNet(params: Record<string, unknown>): Promise<Record<string, unknown>> {
 	await requireCurrentDocumentType(EDMT_EditorDocumentType.PCB, 'PCB document required for PCB net queries');
 	const net = getRequiredString(params.net, 'net');
@@ -2023,6 +2050,7 @@ function getSupportedMethods(): BridgeMethod[] {
 		'get_pcb_primitive',
 		'get_pcb_primitives_bbox',
 		'list_pcb_nets',
+		'run_pcb_drc',
 		'get_pcb_net',
 		'set_pcb_net_color',
 		'get_pcb_net_primitives',
@@ -2198,6 +2226,103 @@ function getRecord(value: unknown): Record<string, string> | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function summarizePcbDrcResult(rawResult: unknown): {
+	issueCount: number;
+	categories: Array<{ label: string; count: number }>;
+} {
+	if (!Array.isArray(rawResult)) {
+		return {
+			issueCount: countPcbDrcIssues(rawResult),
+			categories: [],
+		};
+	}
+
+	const categories = extractPcbDrcCategories(rawResult);
+	if (categories.length > 0) {
+		return {
+			issueCount: categories.reduce((sum, category) => sum + category.count, 0),
+			categories,
+		};
+	}
+
+	return {
+		issueCount: countPcbDrcIssues(rawResult),
+		categories: rawResult.length > 0
+			? [{ label: 'Issues', count: countPcbDrcIssues(rawResult) }]
+			: [],
+	};
+}
+
+function extractPcbDrcCategories(entries: unknown[]): Array<{ label: string; count: number }> {
+	const categories: Array<{ label: string; count: number }> = [];
+	for (const entry of entries) {
+		const extracted = extractSinglePcbDrcCategory(entry);
+		if (extracted.length > 0)
+			categories.push(...extracted);
+	}
+	return categories;
+}
+
+function extractSinglePcbDrcCategory(entry: unknown): Array<{ label: string; count: number }> {
+	if (!isRecord(entry))
+		return [];
+
+	const label = getPcbDrcCategoryLabel(entry);
+	const children = getPcbDrcChildEntries(entry);
+	if (!children)
+		return [];
+
+	const nestedCategories = extractPcbDrcCategories(children);
+	if (nestedCategories.length > 0)
+		return nestedCategories;
+
+	if (!label)
+		return [];
+
+	return [{
+		label,
+		count: countPcbDrcIssues(children),
+	}];
+}
+
+function getPcbDrcCategoryLabel(entry: Record<string, unknown>): string | undefined {
+	for (const key of ['title', 'name', 'label', 'text', 'key', 'type']) {
+		const value = entry[key];
+		if (typeof value === 'string' && value.trim().length > 0)
+			return value.trim();
+	}
+
+	return undefined;
+}
+
+function getPcbDrcChildEntries(entry: Record<string, unknown>): unknown[] | undefined {
+	for (const key of ['children', 'items', 'list', 'errors', 'details', 'data', 'result']) {
+		const value = entry[key];
+		if (Array.isArray(value))
+			return value;
+	}
+
+	return undefined;
+}
+
+function countPcbDrcIssues(value: unknown): number {
+	if (Array.isArray(value))
+		return value.reduce((sum, entry) => sum + countPcbDrcIssues(entry), 0);
+
+	if (!isRecord(value))
+		return 1;
+
+	const children = getPcbDrcChildEntries(value);
+	if (children)
+		return countPcbDrcIssues(children);
+
+	const explicitCount = value.count;
+	if (typeof explicitCount === 'number' && Number.isFinite(explicitCount) && explicitCount >= 0)
+		return explicitCount;
+
+	return 1;
 }
 
 function getAccessibleEditorShellWindow(): (Window & typeof globalThis) | undefined {

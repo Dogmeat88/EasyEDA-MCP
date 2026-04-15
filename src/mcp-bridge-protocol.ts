@@ -56,6 +56,7 @@ export type BridgeMethod
 		| 'get_pcb_primitive'
 		| 'get_pcb_primitives_bbox'
 		| 'list_pcb_nets'
+		| 'run_pcb_drc'
 		| 'get_pcb_net'
 		| 'set_pcb_net_color'
 		| 'get_pcb_net_primitives'

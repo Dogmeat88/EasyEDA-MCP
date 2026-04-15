@@ -267,6 +267,11 @@ function createToolRegistrations(bridgeSession: EasyedaBridgeCaller): ToolRegist
 			handler: async () => makeToolResult(await bridgeSession.call('list_pcb_nets')),
 		},
 		{
+			name: 'run_pcb_drc',
+			config: { description: 'Run EasyEDA PCB DRC on the active PCB document and return the categorized result summary.', inputSchema: schemas.runPcbDrcInputSchema },
+			handler: async args => makeToolResult(await bridgeSession.call('run_pcb_drc', args)),
+		},
+		{
 			name: 'get_pcb_net',
 			config: { description: 'Return details, current color, and routed length for a PCB net.', inputSchema: schemas.getPcbNetInputSchema },
 			handler: async args => makeToolResult(await bridgeSession.call('get_pcb_net', args)),
