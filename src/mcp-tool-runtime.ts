@@ -319,7 +319,7 @@ function createToolRegistrations(bridgeSession: EasyedaBridgeCaller): ToolRegist
 		{
 			name: 'delete_pcb_line',
 			config: { description: 'Delete a line primitive from the active PCB document. Set skipConfirmation to true to suppress the bridge-side delete prompt.', inputSchema: schemas.deletePrimitiveInputSchema },
-			handler: async args => makeToolResult(await bridgeSession.call('delete_pcb_line', args)),
+			handler: async args => makeToolResult(await callDeletePcbLineWithRecovery(bridgeSession, args)),
 		},
 		{
 			name: 'modify_pcb_text',
@@ -477,6 +477,30 @@ function removePcbComponentFromSource(source: string, primitiveId: string): stri
 	return filtered.join('\n');
 }
 
+function removePcbLineFromSource(source: string, primitiveId: string): string | undefined {
+	const lineTags = new Set(['POLY', 'TRACK', 'LINE']);
+	const lines = source.split('\n');
+	let removed = false;
+	const filtered = lines.filter((line) => {
+		const parsed = parseSourceLine(line);
+		if (!parsed)
+			return true;
+
+		const tag = parsed[0];
+		if (typeof tag === 'string' && lineTags.has(tag) && parsed[1] === primitiveId) {
+			removed = true;
+			return false;
+		}
+
+		return true;
+	});
+
+	if (!removed)
+		return undefined;
+
+	return filtered.join('\n');
+}
+
 async function getDocumentSourceSnapshot(bridgeSession: EasyedaBridgeCaller): Promise<{
 	source: string;
 	sourceHash: string;
@@ -600,6 +624,15 @@ async function listPcbComponentPrimitiveIds(bridgeSession: EasyedaBridgeCaller):
 	return primitiveIds.filter((value): value is string => typeof value === 'string');
 }
 
+async function listPcbLinePrimitiveIds(bridgeSession: EasyedaBridgeCaller): Promise<string[] | undefined> {
+	const response = asRecord(await bridgeSession.call('list_pcb_primitive_ids', { family: 'line' }));
+	const primitiveIds = response?.primitiveIds;
+	if (!Array.isArray(primitiveIds))
+		return undefined;
+
+	return primitiveIds.filter((value): value is string => typeof value === 'string');
+}
+
 async function rewritePcbComponentDeletionFromSource(
 	bridgeSession: EasyedaBridgeCaller,
 	args: Record<string, unknown>,
@@ -637,6 +670,43 @@ async function rewritePcbComponentDeletionFromSource(
 	};
 }
 
+async function rewritePcbLineDeletionFromSource(
+	bridgeSession: EasyedaBridgeCaller,
+	args: Record<string, unknown>,
+	primitiveId: string,
+	metadata: Record<string, unknown> = {},
+): Promise<Record<string, unknown>> {
+	const currentDocumentSource = await getDocumentSourceSnapshot(bridgeSession);
+	const cleanedSource = removePcbLineFromSource(currentDocumentSource.source, primitiveId);
+	if (typeof cleanedSource !== 'string')
+		throw new TypeError(`delete_pcb_line could not remove primitive ${primitiveId} from the active document source`);
+
+	const rewriteResult = normalizeStructuredContent(await callSetDocumentSourceWithRecovery(bridgeSession, {
+		source: cleanedSource,
+		expectedSourceHash: currentDocumentSource.sourceHash,
+		skipConfirmation: true,
+	}));
+
+	const updatedLinePrimitiveIds = await listPcbLinePrimitiveIds(bridgeSession);
+	if (updatedLinePrimitiveIds?.includes(primitiveId))
+		throw new Error(`delete_pcb_line reported success but primitive ${primitiveId} still exists after verified source rewrite`);
+
+	let saved: unknown;
+	if (args.saveAfter === true)
+		saved = asRecord(await bridgeSession.call('save_active_document'))?.saved;
+
+	return {
+		primitiveId,
+		deleted: true,
+		saved,
+		...metadata,
+		sourceRewriteRecovered: true,
+		postDeleteLinePresent: false,
+		sourceHash: rewriteResult.sourceHash,
+		previousSourceHash: rewriteResult.previousSourceHash,
+	};
+}
+
 async function recoverDelayedDeletedPcbComponent(
 	bridgeSession: EasyedaBridgeCaller,
 	primitiveId: string,
@@ -652,6 +722,26 @@ async function recoverDelayedDeletedPcbComponent(
 		primitiveId,
 		deleted: true,
 		postDeleteComponentPresent: false,
+		delayedReadbackRecovered: true,
+		recoveryError: recoveryError instanceof Error ? recoveryError.message : String(recoveryError),
+	};
+}
+
+async function recoverDelayedDeletedPcbLine(
+	bridgeSession: EasyedaBridgeCaller,
+	primitiveId: string,
+	metadata: Record<string, unknown>,
+	recoveryError: unknown,
+): Promise<Record<string, unknown> | null> {
+	const linePrimitiveIds = await listPcbLinePrimitiveIds(bridgeSession);
+	if (!linePrimitiveIds || linePrimitiveIds.includes(primitiveId))
+		return null;
+
+	return {
+		...metadata,
+		primitiveId,
+		deleted: true,
+		postDeleteLinePresent: false,
 		delayedReadbackRecovered: true,
 		recoveryError: recoveryError instanceof Error ? recoveryError.message : String(recoveryError),
 	};
@@ -724,6 +814,84 @@ async function callDeletePcbComponentWithRecovery(
 		}
 		catch (recoveryError: unknown) {
 			const delayedRecovery = await recoverDelayedDeletedPcbComponent(bridgeSession, primitiveId, {
+				timeoutRecovered: true,
+				readbackVerified: true,
+			}, recoveryError);
+			if (delayedRecovery)
+				return delayedRecovery;
+
+			throw recoveryError;
+		}
+	}
+}
+
+async function callDeletePcbLineWithRecovery(
+	bridgeSession: EasyedaBridgeCaller,
+	args: Record<string, unknown>,
+): Promise<unknown> {
+	const primitiveId = typeof args.primitiveId === 'string' ? args.primitiveId : undefined;
+
+	try {
+		const bridgeResult = normalizeStructuredContent(await bridgeSession.call('delete_pcb_line', args));
+		if (typeof primitiveId !== 'string')
+			return bridgeResult;
+
+		const linePrimitiveIds = await listPcbLinePrimitiveIds(bridgeSession);
+		if (linePrimitiveIds && !linePrimitiveIds.includes(primitiveId)) {
+			return {
+				...bridgeResult,
+				primitiveId,
+				deleted: true,
+				postDeleteLinePresent: false,
+				readbackVerified: true,
+				hostReportedDeleted: bridgeResult.deleted,
+			};
+		}
+
+		try {
+			return await rewritePcbLineDeletionFromSource(bridgeSession, args, primitiveId, {
+				readbackVerified: true,
+				hostReportedDeleted: bridgeResult.deleted,
+			});
+		}
+		catch (recoveryError: unknown) {
+			const delayedRecovery = await recoverDelayedDeletedPcbLine(bridgeSession, primitiveId, {
+				readbackVerified: true,
+				hostReportedDeleted: bridgeResult.deleted,
+			}, recoveryError);
+			if (delayedRecovery)
+				return delayedRecovery;
+
+			throw recoveryError;
+		}
+	}
+	catch (error: unknown) {
+		if (!(error instanceof Error) || !error.message.includes('timed out waiting for delete_pcb_line'))
+			throw error;
+
+		if (typeof primitiveId !== 'string')
+			throw error;
+
+		const linePrimitiveIds = await listPcbLinePrimitiveIds(bridgeSession);
+
+		if (linePrimitiveIds && !linePrimitiveIds.includes(primitiveId)) {
+			return {
+				primitiveId,
+				deleted: true,
+				timeoutRecovered: true,
+				readbackVerified: true,
+				postDeleteLinePresent: false,
+			};
+		}
+
+		try {
+			return await rewritePcbLineDeletionFromSource(bridgeSession, args, primitiveId, {
+				timeoutRecovered: true,
+				readbackVerified: true,
+			});
+		}
+		catch (recoveryError: unknown) {
+			const delayedRecovery = await recoverDelayedDeletedPcbLine(bridgeSession, primitiveId, {
 				timeoutRecovered: true,
 				readbackVerified: true,
 			}, recoveryError);

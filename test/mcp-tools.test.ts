@@ -724,6 +724,139 @@ test('delete_pcb_component treats delayed native deletion as success when source
 	assert.match(String(result.structuredContent.recoveryError), /set_document_source reported success but active document still has/);
 });
 
+test('delete_pcb_line falls back to source cleanup when the bridge reports success but the primitive remains present', async () => {
+	const originalSource = [
+		'["DOCTYPE","PCB","1.8"]',
+		'["POLY","e11",0,"AC_L_FUSED",1,20,[0,0,"L",100,0],0]',
+		'["POLY","e17",0,"AC_N",1,20,[0,10,"L",100,10],0]',
+	].join('\n');
+	const originalSourceHash = computeSourceRevision(originalSource);
+	let updatedSource = originalSource;
+	const registeredTools = createRegisteredTools({
+		async call(method, params) {
+			if (method === 'delete_pcb_line')
+				return { primitiveId: 'e11', deleted: true, saved: false };
+
+			if (method === 'list_pcb_primitive_ids') {
+				return {
+					family: params?.family,
+					primitiveIds: updatedSource.includes('["POLY","e11"') ? ['e11', 'e17'] : ['e17'],
+				};
+			}
+
+			if (method === 'get_document_source') {
+				return {
+					source: updatedSource,
+					sourceHash: computeSourceRevision(updatedSource),
+					characters: updatedSource.length,
+				};
+			}
+
+			if (method === 'set_document_source') {
+				updatedSource = String(params?.source ?? '');
+				return {
+					updated: true,
+					characters: updatedSource.length,
+					sourceHash: computeSourceRevision(updatedSource),
+					previousSourceHash: originalSourceHash,
+				};
+			}
+
+			return { method, params };
+		},
+		getConnectionState() {
+			return { connected: true };
+		},
+	});
+	const deleteTool = registeredTools.find(tool => tool.name === 'delete_pcb_line');
+
+	assert.ok(deleteTool);
+	const result = await deleteTool.handler({
+		primitiveId: 'e11',
+		skipConfirmation: true,
+	}) as { structuredContent: Record<string, unknown> };
+
+	assert.equal(result.structuredContent.deleted, true);
+	assert.equal(result.structuredContent.readbackVerified, true);
+	assert.equal(result.structuredContent.hostReportedDeleted, true);
+	assert.equal(result.structuredContent.sourceRewriteRecovered, true);
+	assert.equal(result.structuredContent.postDeleteLinePresent, false);
+	assert.equal(updatedSource.includes('["POLY","e11"'), false);
+	assert.equal(updatedSource.includes('["POLY","e17"'), true);
+	assert.equal(result.structuredContent.previousSourceHash, originalSourceHash);
+});
+
+test('delete_pcb_line recovers when timeout leaves the primitive in source', async () => {
+	const originalSource = [
+		'["DOCTYPE","PCB","1.8"]',
+		'["POLY","e11",0,"AC_L_FUSED",1,20,[0,0,"L",100,0],0]',
+		'["POLY","e17",0,"AC_N",1,20,[0,10,"L",100,10],0]',
+	].join('\n');
+	const originalSourceHash = computeSourceRevision(originalSource);
+	let updatedSource = originalSource;
+	const callLog: Array<{ method: string; params?: Record<string, unknown> }> = [];
+	const registeredTools = createRegisteredTools({
+		async call(method, params) {
+			callLog.push({ method, params });
+
+			if (method === 'delete_pcb_line')
+				throw new Error('EasyEDA bridge timed out waiting for delete_pcb_line');
+
+			if (method === 'list_pcb_primitive_ids') {
+				return {
+					family: params?.family,
+					primitiveIds: updatedSource.includes('["POLY","e11"') ? ['e11', 'e17'] : ['e17'],
+				};
+			}
+
+			if (method === 'get_document_source') {
+				return {
+					source: updatedSource,
+					sourceHash: computeSourceRevision(updatedSource),
+					characters: updatedSource.length,
+				};
+			}
+
+			if (method === 'set_document_source') {
+				updatedSource = String(params?.source ?? '');
+				return {
+					updated: true,
+					characters: updatedSource.length,
+					sourceHash: computeSourceRevision(updatedSource),
+					previousSourceHash: originalSourceHash,
+				};
+			}
+
+			if (method === 'save_active_document')
+				return { saved: true };
+
+			return { method, params };
+		},
+		getConnectionState() {
+			return { connected: true };
+		},
+	});
+	const deleteTool = registeredTools.find(tool => tool.name === 'delete_pcb_line');
+
+	assert.ok(deleteTool);
+	const result = await deleteTool.handler({
+		primitiveId: 'e11',
+		saveAfter: true,
+		skipConfirmation: true,
+	}) as { structuredContent: Record<string, unknown> };
+
+	assert.equal(result.structuredContent.deleted, true);
+	assert.equal(result.structuredContent.timeoutRecovered, true);
+	assert.equal(result.structuredContent.sourceRewriteRecovered, true);
+	assert.equal(result.structuredContent.saved, true);
+	assert.equal(result.structuredContent.postDeleteLinePresent, false);
+	assert.equal(updatedSource.includes('["POLY","e11"'), false);
+
+	const setDocumentSourceCall = callLog.find(entry => entry.method === 'set_document_source');
+	assert.ok(setDocumentSourceCall);
+	assert.equal(setDocumentSourceCall?.params?.expectedSourceHash, originalSourceHash);
+});
+
 test('list_project_objects normalizes schematic and page names from title block metadata', async () => {
 	const registeredTools = createRegisteredTools({
 		async call(method, params) {
