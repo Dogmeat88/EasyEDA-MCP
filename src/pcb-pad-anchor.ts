@@ -28,6 +28,10 @@ export function getPcbPadRouteAnchor(
 	if (!Number.isFinite(distance) || distance === 0)
 		return center;
 
+	const symmetricPadAnchor = getSymmetricPadRouteAnchor(pad, center, deltaX, deltaY, lineWidth);
+	if (symmetricPadAnchor)
+		return symmetricPadAnchor;
+
 	const unitX = deltaX / distance;
 	const unitY = deltaY / distance;
 	const extent = getPadExtentAlongDirection(pad, unitX, unitY);
@@ -40,6 +44,40 @@ export function getPcbPadRouteAnchor(
 	return {
 		x: center.x + unitX * anchorDistance,
 		y: center.y + unitY * anchorDistance,
+	};
+}
+
+function getSymmetricPadRouteAnchor(
+	pad: PcbPadRouteAnchorPad,
+	center: Point,
+	deltaX: number,
+	deltaY: number,
+	lineWidth?: number,
+): Point | undefined {
+	const width = callOptionalNumberGetter(pad, 'getState_Width');
+	const height = callOptionalNumberGetter(pad, 'getState_Height');
+	const symmetricExtent = width && height && Math.abs(width - height) <= 1e-6 ? width / 2 : undefined;
+	const diameter = callOptionalNumberGetter(pad, 'getState_Diameter');
+	const holeDiameter = callOptionalNumberGetter(pad, 'getState_HoleDiameter');
+	const radius = diameter ? diameter / 2 : holeDiameter ? holeDiameter / 2 + DEFAULT_PAD_ROUTE_EXTENT / 2 : symmetricExtent;
+	if (!radius)
+		return undefined;
+
+	const inset = Math.max(
+		MIN_PAD_ROUTE_INSET,
+		Math.min(radius * 0.25, (lineWidth ?? DEFAULT_PAD_ROUTE_EXTENT) / 2),
+	);
+	const anchorDistance = Math.max(0, radius - inset);
+	if (Math.abs(deltaX) >= Math.abs(deltaY)) {
+		return {
+			x: center.x + Math.sign(deltaX || 1) * anchorDistance,
+			y: center.y,
+		};
+	}
+
+	return {
+		x: center.x,
+		y: center.y + Math.sign(deltaY || 1) * anchorDistance,
 	};
 }
 

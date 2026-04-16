@@ -57,6 +57,29 @@ test('getPcbPadRouteAnchor falls back to circular diameter for through-hole styl
 	assert.ok(anchor.x < 130);
 });
 
+test('getPcbPadRouteAnchor snaps circular pad anchors to a cardinal side for diagonal targets', () => {
+	const anchor = getPcbPadRouteAnchor(createPad({ diameter: 60 }), { x: 180, y: 260 }, 10);
+
+	assert.equal(anchor.y, 200);
+	assert.ok(anchor.x > 120);
+	assert.ok(anchor.x < 130);
+});
+
+test('getPcbPadRouteAnchor snaps symmetric width-height pads to a cardinal side for diagonal targets', () => {
+	const anchor = getPcbPadRouteAnchor(createPad({ width: 40, height: 40 }), { x: 180, y: 260 }, 10);
+
+	assert.equal(anchor.y, 200);
+	assert.ok(anchor.x > 110);
+	assert.ok(anchor.x < 120);
+});
+
+test('getPcbPadRouteAnchor snaps hole-diameter fallbacks to a cardinal side for vertical exits', () => {
+	const anchor = getPcbPadRouteAnchor(createPad({ holeDiameter: 40 }), { x: 104, y: 280 }, 10);
+
+	assert.equal(anchor.x, 100);
+	assert.equal(anchor.y, 220);
+});
+
 test('getPcbPadRouteAnchor returns the pad center for degenerate zero-length routes', () => {
 	const anchor = getPcbPadRouteAnchor(createPad({ width: 40, height: 20 }), { x: 100, y: 200 }, 10);
 

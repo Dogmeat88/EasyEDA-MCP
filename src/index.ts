@@ -18,6 +18,21 @@ import {
 } from './easyeda-mcp-bridge';
 import { EXTENSION_DISPLAY_NAME, EXTENSION_VERSION } from './extension-metadata';
 
+function scheduleRuntimeTimeout(callback: () => void, delayMs: number): void {
+	if (eda?.sys_Timer && typeof eda.sys_Timer.setTimeoutTimer === 'function') {
+		eda.sys_Timer.setTimeoutTimer(callback, delayMs);
+		return;
+	}
+
+	const runtimeWindow = globalThis.document?.defaultView;
+	if (runtimeWindow && typeof runtimeWindow.setTimeout === 'function') {
+		runtimeWindow.setTimeout.call(runtimeWindow, callback, delayMs);
+		return;
+	}
+
+	globalThis.setTimeout(callback, delayMs);
+}
+
 export function activate(status?: 'onStartupFinished', arg?: string): void {
 	void status;
 	void arg;
@@ -30,8 +45,13 @@ export function bridgeStatus(): void {
 
 export function bridgeReconnect(): void {
 	void reconnectEasyedaMcpBridge();
-	setTimeout(() => {
-		showBridgeStatus();
+	scheduleRuntimeTimeout(() => {
+		try {
+			showBridgeStatus();
+		}
+		catch {
+			// A hot-loaded runtime can reconnect successfully even when the status dialog path is unavailable.
+		}
 	}, 1500);
 }
 

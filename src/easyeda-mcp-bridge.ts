@@ -59,7 +59,7 @@ const bridgeState: BridgeState = {
 	connectAttempts: 0,
 };
 
-let pendingConnectionDiagnosticTimer: NodeJS.Timeout | undefined;
+let pendingConnectionDiagnosticTimer: unknown;
 let bridgeRuntimeStarted = false;
 let bridgeSocketSequence = 0;
 
@@ -72,7 +72,7 @@ const SCHEMATIC_COMPONENT_HOST_TIMEOUT_HINT = 'EasyEDA schematic component place
 const BRIDGE_WATCHDOG_INTERVAL_MS = 5_000;
 const BRIDGE_WATCHDOG_RECONNECT_COOLDOWN_MS = 5_000;
 
-let bridgeWatchdogTimer: NodeJS.Timeout | undefined;
+let bridgeWatchdogTimer: unknown;
 let bridgeWatchdogInFlight = false;
 let bridgeWatchdogLastReconnectAt = 0;
 
@@ -109,7 +109,7 @@ export async function startEasyedaMcpBridge(forceReconnect = false): Promise<voi
 
 	if (previousSocketId) {
 		try {
-			eda.sys_WebSocket.close(previousSocketId);
+			callHostMethod(eda.sys_WebSocket, 'close', previousSocketId);
 			bridgeState.lastEvent = previousSocketId === socketId
 				? `closed stale websocket ${previousSocketId} before retrying with a new id`
 				: `closed previous websocket ${previousSocketId} before registering ${socketId}`;
@@ -121,7 +121,9 @@ export async function startEasyedaMcpBridge(forceReconnect = false): Promise<voi
 	}
 
 	try {
-		eda.sys_WebSocket.register(
+		callHostMethod(
+			eda.sys_WebSocket,
+			'register',
 			socketId,
 			bridgeState.endpoint,
 			async (event) => {
@@ -263,7 +265,7 @@ function ensureBridgeWatchdog(): void {
 	if (bridgeWatchdogTimer)
 		return;
 
-	bridgeWatchdogTimer = setInterval(() => {
+	bridgeWatchdogTimer = scheduleRuntimeInterval(() => {
 		void runBridgeWatchdog();
 	}, BRIDGE_WATCHDOG_INTERVAL_MS);
 }
@@ -2616,12 +2618,26 @@ async function maybeConfirmDestructiveAction(
 }
 
 function getBridgeEndpoint(): string {
-	const storedValue = eda.sys_Storage.getExtensionUserConfig(MCP_BRIDGE_CONFIG_KEY);
+	let storedValue: unknown;
+	try {
+		storedValue = eda.sys_Storage.getExtensionUserConfig(MCP_BRIDGE_CONFIG_KEY);
+	}
+	catch {
+		return DEFAULT_BRIDGE_ENDPOINT;
+	}
+
 	return typeof storedValue === 'string' && storedValue.trim() ? storedValue.trim() : DEFAULT_BRIDGE_ENDPOINT;
 }
 
 function hydratePersistedBridgeState(): void {
-	const storedValue = eda.sys_Storage.getExtensionUserConfig(MCP_BRIDGE_RUNTIME_STATE_KEY);
+	let storedValue: unknown;
+	try {
+		storedValue = eda.sys_Storage.getExtensionUserConfig(MCP_BRIDGE_RUNTIME_STATE_KEY);
+	}
+	catch {
+		return;
+	}
+
 	if (!storedValue || typeof storedValue !== 'object')
 		return;
 
@@ -2657,7 +2673,7 @@ function sendSocketMessage(
 		return;
 
 	try {
-		eda.sys_WebSocket.send(socketId, serializeBridgeEnvelope(message));
+		callHostMethod(eda.sys_WebSocket, 'send', socketId, serializeBridgeEnvelope(message));
 		bridgeState.lastEvent = 'sent websocket message';
 		void persistBridgeState();
 	}
@@ -2672,7 +2688,7 @@ function sendSocketMessage(
 
 function scheduleConnectionDiagnostic(socketId: string): void {
 	clearPendingConnectionDiagnosticTimer();
-	pendingConnectionDiagnosticTimer = setTimeout(() => {
+	pendingConnectionDiagnosticTimer = scheduleRuntimeTimeout(() => {
 		if (!shouldHandleBridgeSocketCallback(bridgeState.socketId, socketId))
 			return;
 
@@ -2689,8 +2705,62 @@ function clearPendingConnectionDiagnosticTimer(): void {
 	if (!pendingConnectionDiagnosticTimer)
 		return;
 
-	clearTimeout(pendingConnectionDiagnosticTimer);
+	clearRuntimeTimeout(pendingConnectionDiagnosticTimer);
 	pendingConnectionDiagnosticTimer = undefined;
+}
+
+function getRuntimeWindow(): (Window & typeof globalThis) | undefined {
+	return globalThis.document?.defaultView ?? (typeof window !== 'undefined' ? window : undefined);
+}
+
+function scheduleRuntimeTimeout(callback: () => void, delayMs: number): unknown {
+	if (eda?.sys_Timer && typeof eda.sys_Timer.setTimeoutTimer === 'function')
+		return eda.sys_Timer.setTimeoutTimer(callback, delayMs);
+
+	const runtimeWindow = getRuntimeWindow();
+	if (runtimeWindow && typeof runtimeWindow.setTimeout === 'function')
+		return runtimeWindow.setTimeout.call(runtimeWindow, callback, delayMs);
+
+	return globalThis.setTimeout(callback, delayMs);
+}
+
+
+function clearRuntimeTimeout(timer: unknown): void {
+	if (eda?.sys_Timer && typeof eda.sys_Timer.clearTimeoutTimer === 'function') {
+		eda.sys_Timer.clearTimeoutTimer(timer);
+		return;
+	}
+
+	const runtimeWindow = getRuntimeWindow();
+	if (runtimeWindow && typeof runtimeWindow.clearTimeout === 'function') {
+		runtimeWindow.clearTimeout.call(runtimeWindow, timer as number);
+		return;
+	}
+
+	globalThis.clearTimeout(timer as NodeJS.Timeout);
+}
+
+function scheduleRuntimeInterval(callback: () => void, delayMs: number): unknown {
+	if (eda?.sys_Timer && typeof eda.sys_Timer.setIntervalTimer === 'function')
+		return eda.sys_Timer.setIntervalTimer(callback, delayMs);
+
+	const runtimeWindow = getRuntimeWindow();
+	if (runtimeWindow && typeof runtimeWindow.setInterval === 'function')
+		return runtimeWindow.setInterval.call(runtimeWindow, callback, delayMs);
+
+	return globalThis.setInterval(callback, delayMs);
+}
+
+function callHostMethod<TReturn>(hostObject: unknown, methodName: string, ...args: unknown[]): TReturn {
+	if (!hostObject || (typeof hostObject !== 'object' && typeof hostObject !== 'function'))
+		throw new Error(`EasyEDA host object is unavailable for ${methodName}`);
+
+	const candidate = hostObject as Record<string, unknown>;
+	const method = candidate[methodName];
+	if (typeof method !== 'function')
+		throw new Error(`EasyEDA host method ${methodName} is unavailable`);
+
+	return (method as (...callArgs: unknown[]) => TReturn).call(hostObject, ...args);
 }
 
 function getRequiredString(value: unknown, key: string): string {
