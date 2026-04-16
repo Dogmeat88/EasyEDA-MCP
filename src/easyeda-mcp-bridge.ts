@@ -1610,7 +1610,7 @@ async function runPcbDrc(params: Record<string, unknown>): Promise<Record<string
 	const rawResult = await withHostMethodTimeout(
 		'eda.pcb_Drc.check',
 		PCB_DRC_HOST_TIMEOUT_MS,
-		() => eda.pcb_Drc.check(strict, showUi, true),
+		() => Promise.resolve(callHostMethod(eda.pcb_Drc, 'check', strict, showUi, true)),
 		PCB_DRC_HOST_TIMEOUT_HINT,
 	);
 	const summary = summarizePcbDrcResult(rawResult);

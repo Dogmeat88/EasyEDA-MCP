@@ -11,6 +11,8 @@ function createPad(overrides?: Partial<{
 	height: number;
 	diameter: number;
 	holeDiameter: number;
+	pad: unknown;
+	hole: unknown;
 }>) {
 	const state = {
 		x: overrides?.x ?? 100,
@@ -20,6 +22,8 @@ function createPad(overrides?: Partial<{
 		height: overrides?.height,
 		diameter: overrides?.diameter,
 		holeDiameter: overrides?.holeDiameter,
+		pad: overrides?.pad,
+		hole: overrides?.hole,
 	};
 
 	return {
@@ -30,6 +34,8 @@ function createPad(overrides?: Partial<{
 		getState_Height: state.height === undefined ? undefined : () => state.height,
 		getState_Diameter: state.diameter === undefined ? undefined : () => state.diameter,
 		getState_HoleDiameter: state.holeDiameter === undefined ? undefined : () => state.holeDiameter,
+		getState_Pad: state.pad === undefined ? undefined : () => state.pad,
+		getState_Hole: state.hole === undefined ? undefined : () => state.hole,
 	};
 }
 
@@ -43,6 +49,14 @@ test('getPcbPadRouteAnchor moves a rectangular pad anchor toward the target whil
 
 test('getPcbPadRouteAnchor respects pad rotation when resolving the pad edge', () => {
 	const anchor = getPcbPadRouteAnchor(createPad({ width: 40, height: 20, rotation: 90 }), { x: 100, y: 280 }, 10);
+
+	assert.equal(anchor.x, 100);
+	assert.ok(anchor.y > 200);
+	assert.ok(anchor.y < 220);
+});
+
+test('getPcbPadRouteAnchor respects radian rotation values from the live EasyEDA pad API', () => {
+	const anchor = getPcbPadRouteAnchor(createPad({ width: 40, height: 20, rotation: Math.PI / 2 }), { x: 100, y: 280 }, 10);
 
 	assert.equal(anchor.x, 100);
 	assert.ok(anchor.y > 200);
@@ -71,6 +85,14 @@ test('getPcbPadRouteAnchor snaps symmetric width-height pads to a cardinal side 
 	assert.equal(anchor.y, 200);
 	assert.ok(anchor.x > 110);
 	assert.ok(anchor.x < 120);
+});
+
+test('getPcbPadRouteAnchor uses getState_Pad tuple geometry when width and height getters are unavailable', () => {
+	const anchor = getPcbPadRouteAnchor(createPad({ pad: ['RECT', 60, 60, 0] }), { x: 180, y: 200 }, 10);
+
+	assert.equal(anchor.y, 200);
+	assert.ok(anchor.x > 120);
+	assert.ok(anchor.x < 130);
 });
 
 test('getPcbPadRouteAnchor snaps hole-diameter fallbacks to a cardinal side for vertical exits', () => {
