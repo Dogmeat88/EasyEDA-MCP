@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { BoardEdgeSchema } from './types';
 
 const scalarRecordSchema = z.record(z.string(), z.union([z.string(), z.number(), z.boolean()]));
 const unknownRecordSchema = z.record(z.string(), z.unknown());
@@ -237,6 +238,18 @@ export const addPcbComponentInputSchema = z.object({
 	rotation: z.number().optional(),
 	primitiveLock: z.boolean().optional(),
 	saveAfter: z.boolean().optional(),
+});
+
+export const alignToBoardEdgeInputSchema = z.object({
+	componentId: z.string().min(1),
+	edge: BoardEdgeSchema,
+	clearance: z.number().nonnegative(),
+	saveAfter: z.boolean().optional(),
+});
+
+export const getLayoutFitnessScoreInputSchema = z.object({
+	connectorDesignatorPrefixes: z.array(z.string().min(1)).min(1).optional(),
+	matingSideDepth: z.number().positive().optional(),
 });
 
 export const pcbComponentPadsInputSchema = z.object({
@@ -556,6 +569,7 @@ export const easyedaToolNames = [
 	'get_schematic_primitives_bbox',
 	'add_pcb_component',
 	'modify_pcb_component',
+	'align_to_board_edge',
 	'delete_pcb_component',
 	'list_pcb_component_pads',
 	'route_pcb_line_between_component_pads',
@@ -569,6 +583,7 @@ export const easyedaToolNames = [
 	'list_pcb_nets',
 	'run_pcb_drc',
 	'get_pcb_net',
+	'get_layout_fitness_score',
 	'set_pcb_net_color',
 	'get_pcb_net_primitives',
 	'modify_schematic_text',

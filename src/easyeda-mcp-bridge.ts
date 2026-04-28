@@ -45,6 +45,7 @@ interface BridgeState {
 	socketId?: string;
 	lastAttemptAt?: number;
 	lastConnectedAt?: number;
+	lastVerifiedAt?: number;
 	lastError?: string;
 	lastEvent?: string;
 	serverInfo?: Record<string, unknown>;
@@ -71,10 +72,12 @@ const SCHEMATIC_COMPONENT_HOST_TIMEOUT_MS = 45_000;
 const SCHEMATIC_COMPONENT_HOST_TIMEOUT_HINT = 'EasyEDA schematic component placement is taking too long in this session. The bridge will verify whether the component was created before failing.';
 const BRIDGE_WATCHDOG_INTERVAL_MS = 5_000;
 const BRIDGE_WATCHDOG_RECONNECT_COOLDOWN_MS = 5_000;
+const BRIDGE_LIVENESS_PROBE_COOLDOWN_MS = 1_500;
 
 let bridgeWatchdogTimer: unknown;
 let bridgeWatchdogInFlight = false;
 let bridgeWatchdogLastReconnectAt = 0;
+let bridgeLastLivenessProbeAt = 0;
 
 export async function startEasyedaMcpBridge(forceReconnect = false): Promise<void> {
 	hydratePersistedBridgeState();
@@ -170,10 +173,19 @@ export function shouldAttemptBridgeWatchdogReconnect(
 	currentDocument?: BridgeHeaderMenuDocumentLike | null,
 	now = Date.now(),
 	lastWatchdogReconnectAt = 0,
+	connectionStale = false,
 ): boolean {
 	const bridgeMenuMissing = shouldSyncBridgeHeaderMenus(currentDocument);
 	if (!state.started)
 		return bridgeMenuMissing;
+
+	if (connectionStale) {
+		const lastReconnectAttemptAt = Math.max(
+			typeof state.lastAttemptAt === 'number' ? state.lastAttemptAt : 0,
+			lastWatchdogReconnectAt,
+		);
+		return now - lastReconnectAttemptAt >= BRIDGE_WATCHDOG_RECONNECT_COOLDOWN_MS;
+	}
 
 	if (!bridgeMenuMissing && state.connected)
 		return false;
@@ -245,11 +257,17 @@ export function showBridgeStatus(): void {
 		`Connect attempts: ${String(state.connectAttempts)}`,
 		`Last attempt: ${state.lastAttemptAt ? new Date(state.lastAttemptAt).toISOString() : 'never'}`,
 		`Last connected: ${state.lastConnectedAt ? new Date(state.lastConnectedAt).toISOString() : 'never'}`,
+		`Last verified: ${state.lastVerifiedAt ? new Date(state.lastVerifiedAt).toISOString() : 'never'}`,
 		`Last event: ${state.lastEvent ?? 'none'}`,
 		`Last error: ${state.lastError ?? 'none'}`,
 	];
 
 	eda.sys_Dialog.showInformationMessage(lines.join('\n'), 'MCP Bridge Status');
+}
+
+export async function showBridgeStatusWithRefresh(): Promise<void> {
+	await refreshEasyedaMcpBridgeStatus();
+	showBridgeStatus();
 }
 
 async function ensureBridgeHeaderMenus(): Promise<void> {
@@ -280,7 +298,11 @@ async function runBridgeWatchdog(): Promise<void> {
 		if (bridgeMenuMissing)
 			await ensureBridgeHeaderMenus();
 
-		if (!shouldAttemptBridgeWatchdogReconnect(bridgeState, globalThis.document, Date.now(), bridgeWatchdogLastReconnectAt))
+		let connectionStale = false;
+		if (bridgeState.connected && !bridgeMenuMissing)
+			connectionStale = !(await probeBridgeSocketLiveness());
+
+		if (!shouldAttemptBridgeWatchdogReconnect(bridgeState, globalThis.document, Date.now(), bridgeWatchdogLastReconnectAt, connectionStale))
 			return;
 
 		bridgeWatchdogLastReconnectAt = Date.now();
@@ -2644,6 +2666,8 @@ function hydratePersistedBridgeState(): void {
 	const persistedState = storedValue as Partial<BridgeState>;
 	if (typeof persistedState.endpoint === 'string' && persistedState.endpoint.trim())
 		bridgeState.endpoint = persistedState.endpoint;
+	bridgeState.started = typeof persistedState.started === 'boolean' ? persistedState.started : bridgeState.started;
+	bridgeState.connected = typeof persistedState.connected === 'boolean' ? persistedState.connected : bridgeState.connected;
 	if (typeof persistedState.connectAttempts === 'number' && Number.isFinite(persistedState.connectAttempts))
 		bridgeState.connectAttempts = persistedState.connectAttempts;
 	bridgeState.socketId = typeof persistedState.socketId === 'string' && persistedState.socketId.trim()
@@ -2651,9 +2675,18 @@ function hydratePersistedBridgeState(): void {
 		: bridgeState.socketId;
 	bridgeState.lastAttemptAt = typeof persistedState.lastAttemptAt === 'number' ? persistedState.lastAttemptAt : bridgeState.lastAttemptAt;
 	bridgeState.lastConnectedAt = typeof persistedState.lastConnectedAt === 'number' ? persistedState.lastConnectedAt : bridgeState.lastConnectedAt;
+	bridgeState.lastVerifiedAt = typeof persistedState.lastVerifiedAt === 'number' ? persistedState.lastVerifiedAt : bridgeState.lastVerifiedAt;
 	bridgeState.lastError = typeof persistedState.lastError === 'string' ? persistedState.lastError : undefined;
 	bridgeState.lastEvent = typeof persistedState.lastEvent === 'string' ? persistedState.lastEvent : undefined;
 	bridgeState.serverInfo = isRecord(persistedState.serverInfo) ? persistedState.serverInfo : bridgeState.serverInfo;
+}
+
+export async function refreshEasyedaMcpBridgeStatus(forceProbe = true): Promise<BridgeState> {
+	hydratePersistedBridgeState();
+	bridgeState.endpoint = getBridgeEndpoint();
+	if (forceProbe)
+		await probeBridgeSocketLiveness(true);
+	return { ...bridgeState };
 }
 
 async function persistBridgeState(): Promise<void> {
@@ -2662,6 +2695,38 @@ async function persistBridgeState(): Promise<void> {
 	}
 	catch {
 		// Best-effort persistence for command-to-command status visibility.
+	}
+}
+
+async function probeBridgeSocketLiveness(force = false): Promise<boolean> {
+	if (!bridgeState.connected || !bridgeState.socketId)
+		return false;
+
+	const now = Date.now();
+	if (!force && now - bridgeLastLivenessProbeAt < BRIDGE_LIVENESS_PROBE_COOLDOWN_MS)
+		return true;
+
+	bridgeLastLivenessProbeAt = now;
+	try {
+		callHostMethod(
+			eda.sys_WebSocket,
+			'send',
+			bridgeState.socketId,
+			serializeBridgeEnvelope(createExtensionHello(await getHelloPayload())),
+		);
+		bridgeState.lastVerifiedAt = now;
+		bridgeState.lastEvent = force ? 'websocket liveness probe sent (forced)' : 'websocket liveness probe sent';
+		bridgeState.lastError = undefined;
+		void persistBridgeState();
+		return true;
+	}
+	catch (error: unknown) {
+		bridgeState.connected = false;
+		bridgeState.lastError = toErrorMessage(error);
+		bridgeState.lastEvent = 'websocket liveness probe failed';
+		void persistBridgeState();
+		logInfo(`MCP bridge liveness probe failed: ${bridgeState.lastError}`);
+		return false;
 	}
 }
 

@@ -1,6 +1,6 @@
 ---
 name: improve-mcp
-description: 'Improve the EasyEDA MCP service through autonomous live end-to-end validation. Use when fixing bridge or server reliability, testing MCP tool behavior in the EasyEDA editor, creating a disposable project/schematic/PCB from scratch, reconnecting the EasyEDA bridge, or iterating until PCB creation is as complete as possible and Gerber export is reachable with minimal user interaction.'
+description: 'Improve the EasyEDA MCP service through autonomous live end-to-end validation. Use when fixing bridge or server reliability, testing MCP tool behavior in the EasyEDA editor, creating a disposable project/schematic/PCB from scratch, reconnecting the EasyEDA bridge, or iterating until PCB creation reaches a finished two-layer board standard with logical placement, sound routing, and Gerber export reachable with minimal user interaction.'
 argument-hint: 'Describe the MCP behavior to improve or validate'
 user-invocable: true
 ---
@@ -21,8 +21,8 @@ Use these tools together:
 
 - EasyEDA MCP for bridge status, project inspection, document edits, placement flows, PCB creation progress, and source management.
 - Chrome DevTools MCP for opening `https://pro.easyeda.com/editor`, confirming page state, checking login and editor readiness, inspecting progress toward a complete PCB, reading console errors, inspecting network activity, taking snapshots or screenshots, and interacting with the EasyEDA UI when necessary, such as reconnecting the MCP bridge.
-- The local EasyEDA tutorial PDF at `src/context/EasyEDA-Tutorial_v6.4.32.pdf` for extra product guidance on schematic, PCB, and PCB creation workflows when the repo or live runtime leaves behavior ambiguous.
-- The local bundled EasyEDA Pro example projects under `src/context/easyeda-pro-example-projects/` for host-generated reference designs, import baselines, and `.eprj` structure inspection when the repo or live runtime leaves behavior ambiguous.
+- The local EasyEDA tutorial PDF at `.github/skills/improve-mcp/context/EasyEDA-Tutorial_v6.4.32.pdf` for extra product guidance on schematic, PCB, and PCB creation workflows when the repo or live runtime leaves behavior ambiguous.
+- The local bundled EasyEDA Pro example projects under `.github/skills/improve-mcp/context/easyeda-pro-example-projects/` for host-generated reference designs, import baselines, and `.eprj` structure inspection when the repo or live runtime leaves behavior ambiguous.
 - The public EasyEDA documentation at `https://docs.easyeda.com/en/` for extra product and workflow context when the live runtime or repo code leaves behavior ambiguous.
 - A persistent iteration report at `.github/skills/improve-mcp/ITERATION-REPORT.md` for recording each validation loop, code change, restart, reconnection, observed failure, and resulting progress.
 
@@ -30,8 +30,8 @@ Use these tools together:
 
 - Do not ask for permission to proceed when the required access stays scoped to this repository and the EasyEDA editor page in Chrome DevTools MCP.
 - Default to autonomous execution. Only ask the user for help when blocked by an external requirement the agent cannot legally or technically satisfy alone, such as login credentials, MFA, CAPTCHA, account approval, missing local software outside the repo, or a decision that would affect a non-disposable user design.
-- Access to the repository-local tutorial file `src/context/EasyEDA-Tutorial_v6.4.32.pdf` is pre-approved for extra context gathering and does not require additional user confirmation.
-- Access to the repository-local example projects under `src/context/easyeda-pro-example-projects/` is pre-approved for extra context gathering and structural comparison and does not require additional user confirmation.
+- Access to the repository-local tutorial file `.github/skills/improve-mcp/context/EasyEDA-Tutorial_v6.4.32.pdf` is pre-approved for extra context gathering and does not require additional user confirmation.
+- Access to the repository-local example projects under `.github/skills/improve-mcp/context/easyeda-pro-example-projects/` is pre-approved for extra context gathering and structural comparison and does not require additional user confirmation.
 - Access to the public EasyEDA documentation at `https://docs.easyeda.com/en/` is pre-approved for extra context gathering and does not require additional user confirmation.
 - When the workflow requires creating, editing, renaming, or deleting EasyEDA design data autonomously, operate on a disposable validation project, board, schematic, and PCB created for the test run, not on unrelated user designs.
 - Use a deterministic validation-project naming pattern such as `MCP_VALIDATION_<date-or-run-id>`.
@@ -51,10 +51,10 @@ Use these tools together:
 Follow this loop by default when improving the MCP service:
 
 1. Use Chrome DevTools MCP to open `https://pro.easyeda.com/editor`, then confirm the EasyEDA editor is fully loaded.
-2. Create or update `.github/skills/improve-mcp/ITERATION-REPORT.md` before changing code so the current goal, active hypothesis, validation project name, and starting state are recorded.
+2. Create or update `.github/skills/improve-mcp/ITERATION-REPORT.md` from `.github/skills/improve-mcp/ITERATION-REPORT-TEMPLATE.md` before changing code so the current goal, active hypothesis, validation project name, starting state, and PCB gate status are recorded in a fixed structure.
 3. Use EasyEDA MCP to verify connectivity with `bridge_status`, then inspect context with `get_current_context` and `list_project_objects`.
 4. Create a disposable validation project and drive the implementation by creating a schematic and PCB from scratch through MCP.
-5. When expected host-generated project structure, import behavior, or `.eprj` contents are unclear, inspect the local example projects under `src/context/easyeda-pro-example-projects/` before guessing.
+5. When expected host-generated project structure, import behavior, or `.eprj` contents are unclear, inspect the local example projects under `.github/skills/improve-mcp/context/easyeda-pro-example-projects/` before guessing.
 6. Exercise the relevant MCP tools by placing parts, wiring or connecting nets, saving documents, and pushing the workflow as far as possible through MCP.
 7. Measure progress by how far the MCP server can drive the workflow toward a fully complete PCB, not by partial success on isolated tool calls.
 8. Treat any mismatch between advertised tool behavior and observed runtime behavior as a service bug in this repository.
@@ -65,16 +65,33 @@ Follow this loop by default when improving the MCP service:
 13. Reconnect the EasyEDA bridge automatically when required by the change or by bridge instability, using Chrome DevTools MCP to operate the EasyEDA UI when necessary.
 14. Verify the restarted system with `bridge_status` and context checks before continuing.
 15. Before treating PCB work as successful, verify that the schematic components are mapped to the intended PCB footprints and that no footprint mismatch or invalid-footprint issue remains.
-16. Before DRC or fabrication-export validation, verify that the PCB has explicit board-outline geometry on the board outline layer and that the intended board size is therefore defined.
-17. Before treating routing as complete, verify that no intended connections remain as unrouted ratlines or other unresolved net connectivity in the PCB view.
-18. Before treating PCB work as successful or proceeding to export-oriented PCB steps, run the relevant EasyEDA DRC flow and resolve every reported error and warning unless a warning is a verified host-side false positive that is documented explicitly in the report.
-19. When fabrication output is part of the goal, verify that the Gerber export flow is reachable, and when practical also verify the generated Gerber/Drill output in a viewer or EasyEDA's Gerber view before treating the board as fabrication-ready.
-20. When assembly output is part of the goal, verify that BOM and Pick and Place export paths are reachable and note any missing designators, footprint metadata, or placement-origin issues that would make assembly output incomplete.
-21. Rerun the same end-to-end workflow, then append the validation outcome, remaining gap, and next hypothesis to the report.
-22. Continue iterating until the PCB flow completes successfully through MCP or a genuine external blocker remains.
-23. Do not stop at analysis, a proposed fix, or a partial workaround when the agent can still make code changes, restart systems, reconnect the bridge, and rerun validation autonomously.
+16. Before treating placement as successful, verify that the PCB still has intentional functional zoning, outward-facing connector orientation, loop-critical support parts adjacent to the pins they serve, and no noisy or high-current section cutting through quiet sensing, timing, or analog areas.
+17. Before DRC or fabrication-export validation, verify that the PCB has explicit board-outline geometry on the board outline layer and that the intended board size is therefore defined.
+18. Before treating routing as complete, verify that no intended connections remain as unrouted ratlines or other unresolved net connectivity in the PCB view.
+19. Before treating routing as high quality on a two-layer board, verify that critical nets are short and direct, that preferred layer directions and return-path continuity are still recognizable, and that completion did not depend on repeated layer swapping, long detours, or meanders caused by poor placement.
+20. Before treating PCB work as successful or proceeding to export-oriented PCB steps, run the relevant EasyEDA DRC flow and resolve every reported error and warning unless a warning is a verified host-side false positive that is documented explicitly in the report.
+21. When fabrication output is part of the goal, verify that the Gerber export flow is reachable, and when practical also verify the generated Gerber/Drill output in a viewer or EasyEDA's Gerber view before treating the board as fabrication-ready.
+22. When assembly output is part of the goal, verify that BOM and Pick and Place export paths are reachable and note any missing designators, footprint metadata, or placement-origin issues that would make assembly output incomplete.
+23. Rerun the same end-to-end workflow, then append the validation outcome, remaining gap, and next hypothesis to the report.
+24. Continue iterating until the PCB flow completes successfully through MCP or a genuine external blocker remains.
+25. Do not stop at analysis, a proposed fix, or a partial workaround when the agent can still make code changes, restart systems, reconnect the bridge, and rerun validation autonomously.
 
 Do not proceed from a PCB validation milestone to export, fabrication, or completion claims while DRC still reports warnings or errors, unless those warnings are proven false positives outside the MCP service's control and are documented as such.
+
+## PCB Validation Gates
+
+Use these gates when deciding whether a live validation run has produced a finished two-layer PCB rather than a merely non-empty one.
+
+| Gate | Required outcome |
+|------|------------------|
+| **1 · Footprints + intent** | Intended footprints are present; critical nets and connector roles are identifiable from the schematic and import result |
+| **2 · Placement intent** | Functional zones remain logical; connectors face the intended edges; decouplers, crystals, feedback parts, shunts, and other loop-critical parts sit adjacent to the pins they support |
+| **3 · Outline defined** | Explicit `BoardOutLine` geometry exists and all outline primitives use `net: ""` |
+| **4 · Routing quality** | No intended ratlines remain; critical routes are short/direct; layer strategy and return paths are still recognizable |
+| **5 · DRC clean** | EasyEDA DRC reports `All(0)`, `Fatal Error(0)`, `Error(0)`, `Warn(0)` unless a warning is a documented false positive |
+| **6 · Export ready** | Gerber is reachable without outline failure; BOM/Pick and Place are reachable when assembly output is in scope |
+
+Do not claim PCB completion while any gate is still open.
 
 ## Completion Standard
 
@@ -86,8 +103,10 @@ A complete PCB means as fully complete as possible through MCP, including:
 - PCB creation
 - transfer or import of design intent from schematic to PCB when the workflow requires it
 - explicit board outline geometry defining the physical board size
-- intended part placement on the PCB
+- intended part placement on the PCB with logical functional zoning and connector orientation
+- loop-critical support parts kept adjacent to the pins they serve, including decouplers, crystals, feedback networks, bootstrap parts, and shunts when present
 - intended net connectivity or routing completed as far as the host SDK allows
+- two-layer routing that keeps critical paths short/direct and preserves recognizable layer strategy and return-path continuity
 - no unresolved intended ratlines or equivalent unrouted PCB connections
 - saved design state
 - DRC check passes with no errors or warnings
@@ -95,7 +114,7 @@ A complete PCB means as fully complete as possible through MCP, including:
 
 When fabrication or assembly outputs are part of the task, completeness also includes successful validation of the relevant export paths such as Gerber, Drill, BOM, and Pick and Place.
 
-Do not stop at a partial schematic, partial PCB, or partial placement result when the active task is to validate PCB creation from scratch. Likewise, do not treat the PCB stage as complete while DRC warnings remain unresolved.
+Do not stop at a partial schematic, partial PCB, or partial placement result when the active task is to validate PCB creation from scratch. Likewise, do not treat the PCB stage as complete while DRC warnings remain unresolved, or while routing only succeeds through placement compromises such as long crossovers, repeated layer swaps, or fractured return paths.
 
 ## Debugging Procedure
 
@@ -154,6 +173,8 @@ When fixing a bug, prefer adding or updating an automated test that covers the r
 
 Maintain `.github/skills/improve-mcp/ITERATION-REPORT.md` throughout the task.
 
+If the file does not exist yet, create it from `.github/skills/improve-mcp/ITERATION-REPORT-TEMPLATE.md`. For each new run, append one new dated section by copying the template block and filling it in rather than inventing a new layout.
+
 For each iteration, append a new dated section that includes:
 
 - objective
@@ -164,12 +185,13 @@ For each iteration, append a new dated section that includes:
 - concise summary of the code changes made
 - restart and reconnection actions taken
 - validation steps executed
+- PCB validation gate status using one of: `pass`, `fail`, `not reached`, or `blocked by external dependency`
 - result and remaining gap
 - next hypothesis or next step
 
 If DRC was reachable in that iteration, record the DRC result explicitly, including the error count and warning count. If either count is non-zero, describe what must be fixed before proceeding further in the PCB flow.
 
-If footprint validation, board-outline checks, ratline checks, or fabrication/assembly export checks were reached in that iteration, record their results explicitly as well, including what remained unresolved.
+If footprint validation, placement-intent review, board-outline checks, ratline checks, routing-quality review, or fabrication/assembly export checks were reached in that iteration, record their results explicitly as well, including what remained unresolved.
 
 Do not overwrite prior iterations unless correcting factual mistakes. The report should show the full sequence of attempted fixes and observed results.
 
@@ -182,6 +204,7 @@ Do not overwrite prior iterations unless correcting factual mistakes. The report
 - When a fix changes runtime behavior, also update tests and any relevant docs such as `MCP.md`.
 - Measure success by progress toward producing a fully complete PCB through the MCP server, not by partial tool coverage alone.
 - Treat missing footprint assignments, missing board outline geometry, unresolved intended ratlines, and broken fabrication-handoff exports as blocking quality failures for PCB completion.
+- Treat illogical functional zoning, misplaced loop-critical support parts, and routing that only works through long detours or repeated layer swaps as blocking quality failures for PCB completion.
 - Treat DRC warnings as blocking quality failures for PCB completion, not as informational noise, unless they are demonstrated false positives and documented.
 - A successful restart means stale MCP server processes were cleared, one fresh server instance is running, and the bridge has been revalidated with `bridge_status` before continuing.
 - Restart and reconnect automatically after bridge or server changes when needed; do not wait for user approval if the scope stays within this repo and the EasyEDA editor page.

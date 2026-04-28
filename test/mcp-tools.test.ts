@@ -5,9 +5,11 @@ import { computeSourceRevision } from '../src/mcp-bridge-protocol';
 import {
 	addPcbViaInputSchema,
 	addPcbLineInputSchema,
+	alignToBoardEdgeInputSchema,
 	deleteBoardInputSchema,
 	deletePrimitiveInputSchema,
 	easyedaToolNames,
+	getLayoutFitnessScoreInputSchema,
 	modifyPcbViaInputSchema,
 	runPcbDrcInputSchema,
 	modifyPcbLineInputSchema,
@@ -75,6 +77,8 @@ test('registerEasyedaTools registers the full MCP surface including component, q
 	assert.ok(registeredTools.some(tool => tool.name === 'route_pcb_lines_between_component_pads'));
 	assert.ok(registeredTools.some(tool => tool.name === 'add_pcb_via'));
 	assert.ok(registeredTools.some(tool => tool.name === 'get_pcb_net'));
+	assert.ok(registeredTools.some(tool => tool.name === 'align_to_board_edge'));
+	assert.ok(registeredTools.some(tool => tool.name === 'get_layout_fitness_score'));
 	assert.ok(registeredTools.some(tool => tool.name === 'run_pcb_drc'));
 	assert.ok(registeredTools.some(tool => tool.name === 'add_schematic_net_label'));
 	assert.ok(registeredTools.some(tool => tool.name === 'add_pcb_text'));
@@ -149,6 +153,31 @@ test('runPcbDrcInputSchema accepts omitted flags and boolean overrides', () => {
 	});
 });
 
+test('layout-agent input schemas validate edge alignment and optional score parameters', () => {
+	assert.doesNotThrow(() => {
+		alignToBoardEdgeInputSchema.parse({
+			componentId: 'e42',
+			edge: 'NORTH',
+			clearance: 1.5,
+		});
+	});
+
+	assert.throws(() => {
+		alignToBoardEdgeInputSchema.parse({
+			componentId: 'e42',
+			edge: 'UP',
+			clearance: 1.5,
+		});
+	});
+
+	assert.doesNotThrow(() => {
+		getLayoutFitnessScoreInputSchema.parse({
+			connectorDesignatorPrefixes: ['J', 'P'],
+			matingSideDepth: 20,
+		});
+	});
+});
+
 test('run_pcb_drc forwards the bridge result', async () => {
 	const expectedResult = {
 		passed: false,
@@ -175,6 +204,117 @@ test('run_pcb_drc forwards the bridge result', async () => {
 	assert.ok(runPcbDrcTool);
 	const result = await runPcbDrcTool.handler({ strict: false, showUi: true }) as { structuredContent: Record<string, unknown> };
 	assert.deepEqual(result.structuredContent, expectedResult);
+});
+
+test('align_to_board_edge computes a board-edge move and verifies the readback', async () => {
+	let componentBBoxReads = 0;
+	const registeredTools = createRegisteredTools({
+		async call(method, params) {
+			if (method === 'list_pcb_primitive_ids') {
+				if (params?.family === 'line') {
+					assert.deepEqual(params, { family: 'line', layer: 'BoardOutLine' });
+					return { primitiveIds: ['outline-1', 'outline-2'] };
+				}
+
+				return { primitiveIds: [] };
+			}
+
+			if (method === 'get_pcb_primitives_bbox') {
+				assert.ok(params);
+				const primitiveIds = (params.primitiveIds ?? []) as string[];
+				if (primitiveIds[0] === 'outline-1')
+					return { bbox: { left: 0, top: 0, right: 100, bottom: 80 } };
+				if (primitiveIds[0] === 'U1') {
+					componentBBoxReads += 1;
+					return componentBBoxReads === 1
+						? { bbox: { left: 40, top: 30, right: 60, bottom: 50 } }
+						: { bbox: { left: 40, top: 65, right: 60, bottom: 75 } };
+				}
+			}
+
+			if (method === 'modify_pcb_component') {
+				assert.deepEqual(params, {
+					primitiveId: 'U1',
+					x: 50,
+					y: 65,
+					saveAfter: true,
+				});
+				return { saved: true };
+			}
+
+			return { method, params };
+		},
+		getConnectionState() {
+			return { connected: true };
+		},
+	});
+	const tool = registeredTools.find(entry => entry.name === 'align_to_board_edge');
+
+	assert.ok(tool);
+	const result = await tool.handler({ componentId: 'U1', edge: 'SOUTH', clearance: 5, saveAfter: true }) as { structuredContent: Record<string, unknown> };
+	assert.equal(result.structuredContent.readbackVerified, true);
+	assert.deepEqual(result.structuredContent.targetCenter, { x: 50, y: 65 });
+	assert.equal((result.structuredContent.after as Record<string, unknown>).bottom, 75);
+});
+
+test('get_layout_fitness_score reports aggregated net metrics and mating-side obstructions', async () => {
+	const registeredTools = createRegisteredTools({
+		async call(method, params) {
+			if (method === 'list_pcb_nets')
+				return { names: ['GND', 'VCC'] };
+
+			if (method === 'get_pcb_net') {
+				if (params?.net === 'GND')
+					return { length: 20 };
+				if (params?.net === 'VCC')
+					return { length: 10 };
+			}
+
+			if (method === 'list_pcb_primitive_ids') {
+				if (params?.family === 'via')
+					return { count: 2, primitiveIds: ['v1', 'v2'] };
+				if (params?.family === 'line')
+					return { primitiveIds: ['outline-1', 'outline-2'] };
+				if (params?.family === 'component')
+					return { primitiveIds: ['J1', 'U1'] };
+			}
+
+			if (method === 'run_pcb_drc')
+				return { issueCount: 1, categories: [{ label: 'TracktoTrack', count: 1 }] };
+
+			if (method === 'get_pcb_primitive') {
+				if (params?.primitiveId === 'J1')
+					return { primitive: { designator: 'J1' } };
+				if (params?.primitiveId === 'U1')
+					return { primitive: { designator: 'U1' } };
+			}
+
+			if (method === 'get_pcb_primitives_bbox') {
+				const primitiveIds = (params?.primitiveIds ?? []) as string[];
+				if (primitiveIds[0] === 'outline-1')
+					return { bbox: { left: 0, top: 0, right: 100, bottom: 80 } };
+				if (primitiveIds[0] === 'J1')
+					return { bbox: { left: 88, top: 10, right: 100, bottom: 20 } };
+				if (primitiveIds[0] === 'U1')
+					return { bbox: { left: 82, top: 12, right: 95, bottom: 18 } };
+			}
+
+			return { method, params };
+		},
+		getConnectionState() {
+			return { connected: true };
+		},
+	});
+	const tool = registeredTools.find(entry => entry.name === 'get_layout_fitness_score');
+
+	assert.ok(tool);
+	const result = await tool.handler({}) as { structuredContent: Record<string, unknown> };
+	assert.equal((result.structuredContent.metrics as Record<string, unknown>).ratsnestLengthMm, 30);
+	assert.equal((result.structuredContent.metrics as Record<string, unknown>).viaCount, 2);
+	assert.equal((result.structuredContent.constraints as Record<string, unknown>).drcErrors, 1);
+	assert.equal((result.structuredContent.constraints as Record<string, unknown>).isMatingSideClear, false);
+	assert.equal(((result.structuredContent.metadata as Record<string, unknown>).obstructions as unknown[]).length, 1);
+	assert.equal(typeof result.structuredContent.totalScore, 'number');
 });
 
 test('setDocumentSourceInputSchema requires either expectedSourceHash or force', () => {

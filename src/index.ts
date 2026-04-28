@@ -12,8 +12,10 @@
  */
 import {
 	getEasyedaMcpBridgeState,
+	refreshEasyedaMcpBridgeStatus,
 	reconnectEasyedaMcpBridge,
 	showBridgeStatus,
+	showBridgeStatusWithRefresh,
 	startEasyedaMcpBridge,
 } from './easyeda-mcp-bridge';
 import { EXTENSION_DISPLAY_NAME, EXTENSION_VERSION } from './extension-metadata';
@@ -41,6 +43,9 @@ export function activate(status?: 'onStartupFinished', arg?: string): void {
 
 export function bridgeStatus(): void {
 	showBridgeStatus();
+	void refreshEasyedaMcpBridgeStatus().catch(() => {
+		// The status dialog should remain available even when background refresh fails.
+	});
 }
 
 export function bridgeReconnect(): void {
@@ -48,6 +53,9 @@ export function bridgeReconnect(): void {
 	scheduleRuntimeTimeout(() => {
 		try {
 			showBridgeStatus();
+			void refreshEasyedaMcpBridgeStatus().catch(() => {
+				// The reconnect dialog should still appear if the follow-up refresh fails.
+			});
 		}
 		catch {
 			// A hot-loaded runtime can reconnect successfully even when the status dialog path is unavailable.

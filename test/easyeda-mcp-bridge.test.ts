@@ -6,9 +6,11 @@ import test from 'node:test';
 import { shouldSyncBridgeHeaderMenus, syncBridgeHeaderMenus } from '../src/bridge-header-menus';
 import { getSchematicNetLabelCapabilitySummary } from '../src/bridge-runtime-capabilities';
 import { allocateBridgeSocketId, shouldHandleBridgeSocketCallback } from '../src/bridge-socket-lifecycle';
+import { bridgeStatus } from '../src/index';
 import {
 	buildEmptyPcbImportCompareMapFromSchematicNetlist,
 	recoverCreatedPcbComponentFromHostError,
+	refreshEasyedaMcpBridgeStatus,
 	summarizePcbDrcResult,
 	shouldAttemptBridgeWatchdogReconnect,
 	shouldUseHostUiImportFallback,
@@ -16,7 +18,7 @@ import {
 import { describeEditorBootstrapState, getOpenDocumentBootstrapFailure, getRuntimeLocationHash, inferCurrentDocumentFromEditorShell } from '../src/editor-bootstrap-state';
 import { EXTENSION_VERSION } from '../src/extension-metadata';
 import { withHostMethodTimeout } from '../src/host-method-timeout';
-import { computeSourceRevision } from '../src/mcp-bridge-protocol';
+import { computeSourceRevision, MCP_BRIDGE_CONFIG_KEY } from '../src/mcp-bridge-protocol';
 import { getOptionalTrimmedStringIncludingEmpty, resolvePcbLineNetForCreate } from '../src/pcb-line-net';
 import { findAddedPrimitiveIds } from '../src/primitive-id-diff';
 import {
@@ -409,6 +411,86 @@ test('shouldAttemptBridgeWatchdogReconnect retries when a reload drops the bridg
 		),
 		true,
 	);
+
+	assert.equal(
+		shouldAttemptBridgeWatchdogReconnect(
+			{ started: true, connected: true, lastAttemptAt: 0 },
+			{ body: { textContent: 'File\nSettings\nEasyEDA MCP Bridge\nHelp' } },
+			6_000,
+			0,
+			true,
+		),
+		true,
+	);
+});
+
+test('refreshEasyedaMcpBridgeStatus demotes stale connected state when websocket send throws', async () => {
+	const previousEda = globalThis.eda;
+	const storedConfigs = new Map<string, unknown>([
+		[`${MCP_BRIDGE_CONFIG_KEY}:runtime-state`, {
+			endpoint: 'ws://127.0.0.1:19732/easyeda-mcp',
+			started: true,
+			connected: true,
+			socketId: 'easyeda-mcp-bridge-2',
+			connectAttempts: 7,
+			lastAttemptAt: 1_000,
+			lastConnectedAt: 2_000,
+			lastEvent: 'received server hello',
+		}],
+	]);
+
+	globalThis.eda = {
+		...(previousEda ?? {}),
+		sys_Storage: {
+			getExtensionUserConfig: (key: string) => storedConfigs.get(key),
+			setExtensionUserConfig: async (key: string, value: unknown) => {
+				storedConfigs.set(key, value);
+			},
+		},
+		sys_WebSocket: {
+			send: () => {
+				throw new Error('socket not connected');
+			},
+		},
+	};
+
+	try {
+		const state = await refreshEasyedaMcpBridgeStatus();
+		assert.equal(state.connected, false);
+		assert.equal(state.lastEvent, 'websocket liveness probe failed');
+		assert.match(state.lastError ?? '', /socket not connected/);
+	}
+	finally {
+		globalThis.eda = previousEda;
+	}
+});
+
+test('bridgeStatus shows the dialog synchronously before background refresh completes', () => {
+	const previousEda = globalThis.eda;
+	const dialogs: Array<{ message: string, title: string }> = [];
+
+	globalThis.eda = {
+		...(previousEda ?? {}),
+		sys_Dialog: {
+			showInformationMessage: (message: string, title: string) => {
+				dialogs.push({ message, title });
+			},
+		},
+		sys_Storage: {
+			getExtensionUserConfig: () => undefined,
+			setExtensionUserConfig: async () => undefined,
+		},
+	};
+
+	try {
+		bridgeStatus();
+		assert.equal(dialogs.length, 1);
+		assert.equal(dialogs[0]?.title, 'MCP Bridge Status');
+		assert.match(dialogs[0]?.message ?? '', /Version:/);
+	}
+	finally {
+		globalThis.eda = previousEda;
+	}
 });
 
 test('shouldUseHostUiImportFallback only retries unchanged empty PCB imports', () => {

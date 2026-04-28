@@ -1,0 +1,611 @@
+## 2026-04-13
+
+- Objective: fix PCB pad-to-pad routing so EasyEDA DRC recognizes MCP-created traces as attached to pads instead of center-to-center helper lines.
+- Disposable validation project: `Test2` / `Board3` / `Schematic3` / `PCB3`.
+- Starting bridge and UI state: EasyEDA editor loaded on `PCB3`; prior DRC showed `All(63)` with connection and clearance errors after helper-routed traces; daemon had to be restarted.
+- Exact failure symptoms and errors:
+  - Host-side DRC reported disconnected helper-generated traces after routing.
+  - Bridge source used `fromPad.getState_X()/Y()` and `toPad.getState_X()/Y()` directly, producing center-to-center lines.
+  - After code/build/daemon restart, EasyEDA still exposed the extension sandbox and header menu, but no websocket request was attempted and MCP remained disconnected.
+- Files changed in this iteration:
+  - `src/easyeda-mcp-bridge.ts`
+  - `src/pcb-pad-anchor.ts`
+  - `test/pcb-pad-anchor.test.ts`
+- Code changes made:
+  - Added `getPcbPadRouteAnchor(...)` to compute an inset pad-edge anchor from pad geometry toward the next route point.
+  - Updated both `routePcbLineBetweenComponentPads` and `routePcbLinesBetweenComponentPads` to use pad anchors instead of pad centers.
+  - Added focused unit coverage for rectangular, rotated, circular, and degenerate anchor cases.
+- Restart and reconnection actions taken:
+  - Ran focused unit test for `pcb-pad-anchor`.
+  - Ran `npm run compile` and `npm run build`.
+  - Restarted daemon with `npm run mcp:server:daemon`.
+  - Verified listeners on `127.0.0.1:19732` and `127.0.0.1:19733`.
+  - Reloaded the EasyEDA editor page and retried bridge reconnect from the header menu.
+- Validation steps executed:
+  - `node --test --require ts-node/register/transpile-only ./test/pcb-pad-anchor.test.ts` → pass.
+  - `npm run compile` → completed.
+  - `npm run build` → produced updated package bundle in `build/dist/`.
+  - Browser checks showed the extension sandbox UUID `4d178577408e469596af3d0b5df241f0` loaded and `eda` available.
+  - Browser network inspection after reload showed no websocket requests from the editor runtime.
+- PCB validation gate status:
+  - Footprints + intent: pass
+  - Placement intent: pass
+  - Outline defined: pass
+  - Routing quality: fail
+  - DRC clean: fail
+  - Export ready: not reached
+- Result and remaining gap:
+  - Repository routing helper is now patched and locally validated.
+  - Live EasyEDA validation is blocked because the installed editor runtime is not starting the MCP websocket after daemon restart/reload, so the patched bridge code has not yet been exercised against `PCB3`.
+- Next hypothesis or next step:
+  - Reinstall or reactivate the packaged EasyEDA extension bundle from `build/dist/EasyEDA MCP Bridge_v1.3.2.eext`, then reconnect and rerun the `PCB3` reroute/DRC loop.
+
+## 2026-04-13 (post bridge update)
+
+- Objective: resume live validation after the user updated the EasyEDA bridge runtime.
+- Disposable validation project: `Test2` / `Board3` / `Schematic3` / `PCB3`.
+- Starting bridge and UI state: EasyEDA MCP bridge responding again; active document was PCB UUID `2b56c33372a947eba210ce44f840d577`.
+- Exact failure symptoms and errors:
+  - None during this validation slice; the bridge responded and the PCB inventory was readable.
+- Files changed in this iteration:
+  - `.github/skills/improve-mcp/ITERATION-REPORT.md`
+- Code changes made:
+  - None.
+- Restart and reconnection actions taken:
+  - Used the user-updated bridge runtime as-is; no additional repo/runtime changes were required.
+- Validation steps executed:
+  - `get_current_context` confirmed active PCB document `PCB3` in project `Test2`.
+  - `list_pcb_nets` returned the expected 8 nets.
+  - Host-side `eda.pcb_Drc.check()` returned DRC panel summary `All(0) Fatal Error(0) Error(0) Warn(0) Info(0)` with an empty detailed result tree.
+- PCB validation gate status:
+  - Footprints + intent: pass
+  - Placement intent: pass
+  - Outline defined: pass
+  - Routing quality: pass
+  - DRC clean: pass
+  - Export ready: not reached
+- Result and remaining gap:
+  - Live DRC revalidation passed on `PCB3` after the bridge update.
+  - The current remaining unchecked gate is export readiness only.
+- Next hypothesis or next step:
+  - If fabrication readiness is still needed, validate Gerber export reachability next.
+
+## 2026-04-14
+
+- Objective: resume the HRV controller live validation flow and fix PCB component placement so the disposable `HRV_Controller` board can be completed through MCP.
+- Disposable validation project: `test` / `HRV_Controller` / `HRV_Controller_SCH` / `HRV_Controller_PCB`.
+- Starting bridge and UI state: EasyEDA bridge connected; linked schematic page `143d121a775d49a0a6d0569515d2209a` and linked PCB `c743b14c1eb94c52bda6807736cbbff2` were both openable through MCP.
+- Exact failure symptoms and errors:
+  - Live schematic-page targeting succeeded only when `open_document` used the page UUID instead of the schematic UUID.
+  - Host capabilities reported `add_schematic_net_label` unsupported, so the HRV build must rely on the pin-to-net fallback path.
+  - PCB component placement on the active `HRV_Controller_PCB` failed repeatedly with `Cannot convert undefined or null to object` from `add_pcb_component`, even after `get_current_context` confirmed `documentType: PCB`.
+- Files changed in this iteration:
+  - `.github/skills/improve-mcp/ITERATION-REPORT.md`
+- Code changes made:
+  - None yet; current hypothesis is that `add_pcb_component` does not finalize host-created primitives the way `add_schematic_component` already does.
+- Restart and reconnection actions taken:
+  - None yet in this iteration.
+- Validation steps executed:
+  - `bridge_status` and `get_capabilities` confirmed a connected bridge and exposed the schematic-net-label capability gap.
+  - `create_board`, `rename_board`, `rename_schematic`, and `rename_pcb` succeeded and read back as `HRV_Controller` artifacts.
+  - `open_document` succeeded for schematic page UUID `143d121a775d49a0a6d0569515d2209a` and PCB UUID `c743b14c1eb94c52bda6807736cbbff2`.
+  - `add_pcb_component` failed live against multiple library devices with the same null-object error.
+- PCB validation gate status:
+  - Footprints + intent: fail
+  - Placement intent: not reached
+  - Outline defined: not reached
+  - Routing quality: not reached
+  - DRC clean: not reached
+  - Export ready: not reached
+- Result and remaining gap:
+  - Disposable HRV validation artifacts exist and are linked correctly, but the live flow is blocked at the first PCB placement step.
+- Next hypothesis or next step:
+  - Patch `add_pcb_component` to mirror schematic placement finalization semantics, then rerun a live single-component placement check on `HRV_Controller_PCB`.
+
+## 2026-04-15
+
+- Objective: recover the live `HRV_Controller_PCB` session far enough to finish DRC and Gerber-export reachability checks.
+- Disposable validation project: `test` / `HRV_Controller` / `HRV_Controller_SCH` / `HRV_Controller_PCB`.
+- Starting bridge and UI state: routed PCB already existed and bridge-side PCB net readback had passed earlier, but later `open_document(c743b14c1eb94c52bda6807736cbbff2)` began timing out; EasyEDA UI kept rendering the schematic while the URL hash targeted the PCB tab.
+- Exact failure symptoms and errors:
+  - Browser console reported `TypeError: Cannot destructure property 'docType' ... as it is undefined` and `RPC Call getDocStatus Timed Out`.
+  - `get_current_context` returned the schematic page while `editorBootstrapState.urlHash` still targeted `*c743b14c1eb94c52bda6807736cbbff2@...`.
+  - `splitScreenTree.tabs` contained only Start Page plus schematic tabs; the requested PCB tab never hydrated.
+  - In a fresh editor page, host DMT returned `current: { documentType: 0, uuid: '0' }`, `tabs: [tab_page1]`, and `pcbs: []` even though the URL still targeted the HRV project/PCB.
+- Files changed in this iteration:
+  - `src/editor-bootstrap-state.ts`
+  - `test/easyeda-mcp-bridge.test.ts`
+  - `.github/skills/improve-mcp/ITERATION-REPORT.md`
+- Code changes made:
+  - Extended `describeEditorBootstrapState(...)` to treat two additional broken-shell states as bootstrap failures: the host start-page sentinel document (`uuid: '0'`) and URL-targeted tabs that never hydrate into `splitScreenTree`.
+  - Extended `getOpenDocumentBootstrapFailure(...)` to emit a fast-fail recovery message for requested-tab hydration failures instead of waiting for `open_document` to time out.
+  - Added focused bridge tests covering the new sentinel-document and requested-tab-missing cases.
+- Restart and reconnection actions taken:
+  - Opened fresh EasyEDA editor pages against the project and PCB URLs in the same authenticated browser context.
+- Validation steps executed:
+  - `mcp_easyeda-mcp_get_current_context` showed schematic context with PCB-targeting hash.
+  - Chrome page evaluation confirmed `_EXTAPI_SCRIPT_SPACES_[bridgeUuid].eda` remained available.
+  - Chrome page evaluation showed `dmt_Pcb.getAllPcbsInfo()` returning `[]` and `dmt_EditorControl.getSplitScreenTree()` omitting the requested PCB tab.
+  - `TS_NODE_COMPILER_OPTIONS='{"ignoreDeprecations":"5.0"}' node --test --require ts-node/register/transpile-only ./test/easyeda-mcp-bridge.test.ts` → pass (44/44).
+  - `npm run compile` → pass.
+  - Chrome page evaluation confirmed the shell-side `PCB` mode toggle can flip `data-activekey` from `sch` to `pcb` while the host still leaves `currentDocument`, `splitScreenTree`, and URL pinned to the schematic, confirming a stale EasyEDA shell rather than an MCP-only routing issue.
+- PCB validation gate status:
+  - Footprints + intent: pass
+  - Placement intent: pass
+  - Outline defined: pass
+  - Routing quality: pass
+  - DRC clean: blocked by external dependency
+  - Export ready: blocked by external dependency
+- Result and remaining gap:
+  - The PCB design itself remains intact and the MCP repo now detects this bootstrap split state earlier and more clearly.
+  - Live completion is still blocked because the EasyEDA editor shell remains stale even when driven directly through page-level React and DMT APIs.
+- Next hypothesis or next step:
+  - Rebuild and reinstall the updated `.eext` runtime so the improved bootstrap detection is available live, then reopen the project in a fresh EasyEDA shell before retrying PCB DRC and Gerber export.
+
+## 2026-04-15 (pcb drc tool)
+
+- Objective: add a first-class `run_pcb_drc` MCP tool so PCB DRC can be executed through the EasyEDA MCP server instead of a UI-only fallback.
+- Disposable validation project: `test` / `HRV_Controller` / `HRV_Controller_SCH` / `HRV_Controller_PCB`.
+- Starting bridge and UI state: live EasyEDA host inspection had already confirmed `eda.pcb_Drc.check(...)` exists and that prior DRC runs on the active PCB reported 9 connection errors.
+- Exact failure symptoms and errors:
+  - The MCP surface exposed no PCB DRC tool even though the live host already supports `eda.pcb_Drc.check(strict, userInterface, includeVerboseError)`.
+  - Existing PCB completion flow still depended on UI-triggered DRC and manual result extraction.
+- Files changed in this iteration:
+  - `src/mcp-bridge-protocol.ts`
+  - `src/mcp-tool-schemas.ts`
+  - `src/mcp-tool-runtime.ts`
+  - `src/easyeda-mcp-bridge.ts`
+  - `test/mcp-tools.test.ts`
+  - `test/easyeda-mcp-bridge.test.ts`
+  - `.github/skills/improve-mcp/ITERATION-REPORT.md`
+- Code changes made:
+  - Added bridge method and MCP tool registration for `run_pcb_drc`.
+  - Added the `runPcbDrcInputSchema` with optional `strict` and `showUi` flags.
+  - Implemented bridge-side PCB DRC execution through `eda.pcb_Drc.check(..., true)` with a dedicated timeout.
+  - Added `summarizePcbDrcResult(...)` so verbose host DRC output is normalized into category counts and total issue count.
+  - Added focused unit coverage for tool registration/dispatch and DRC result normalization.
+- Restart and reconnection actions taken:
+  - None yet in this iteration; this slice was validated with focused repo tests only.
+- Validation steps executed:
+  - `TS_NODE_COMPILER_OPTIONS='{"ignoreDeprecations":"5.0"}' node --test --require ts-node/register/transpile-only ./test/mcp-tools.test.ts ./test/easyeda-mcp-bridge.test.ts` → pass (65/65).
+  - VS Code Problems check on touched source and test files → no errors.
+- PCB validation gate status:
+  - Footprints + intent: pass
+  - Placement intent: pass
+  - Outline defined: pass
+  - Routing quality: pass
+  - DRC clean: fail
+  - Export ready: blocked by external dependency
+- Result and remaining gap:
+  - The MCP repo now exposes a first-class `run_pcb_drc` tool and can return categorized DRC summaries from the native host API.
+  - Live validation against the installed EasyEDA runtime is still pending; the last known HRV board state still reported 9 connection errors, so the board itself is not DRC-clean yet.
+- Next hypothesis or next step:
+  - Rebuild/reinstall the updated runtime if needed, then run `run_pcb_drc` live against the active PCB and use the returned category counts to drive the next repair loop.
+
+## 2026-04-15 (pcb drc live validation)
+
+- Objective: validate the new `run_pcb_drc` MCP tool against the live EasyEDA editor runtime on the active HRV controller PCB.
+- Disposable validation project: `test` / `HRV_Controller` / `HRV_Controller_SCH` / `PCB4`.
+- Starting bridge and UI state: after rebuilding the package and restarting the daemon, the EasyEDA bridge reconnected on the active PCB tab and `bridge_status` advertised the new `run_pcb_drc` method.
+- Exact failure symptoms and errors:
+  - None in the MCP tool path itself; the tool executed successfully.
+  - The PCB still fails DRC with connection errors across multiple nets, so export remains blocked by board state rather than bridge capability.
+- Files changed in this iteration:
+  - `.github/skills/improve-mcp/ITERATION-REPORT.md`
+- Code changes made:
+  - None; this iteration was live validation only.
+- Restart and reconnection actions taken:
+  - Ran `npm run build` to package the updated extension.
+  - Restarted the daemon with `npm run mcp:server:daemon` after clearing stale server processes.
+  - Reconnected the EasyEDA bridge until `bridge_status` exposed `run_pcb_drc` in the live method list.
+- Validation steps executed:
+  - `bridge_status` confirmed the live runtime now advertises `run_pcb_drc`.
+  - `get_current_context` confirmed the active document is PCB UUID `710ffc7704984f0d8ca5da0f70010de7` in project `eb733bcb4088498e9c66896d842be89b`.
+  - `run_pcb_drc { strict: true, showUi: true }` executed successfully through MCP.
+  - Live DRC result: `passed: false`, `issueCount: 31`, `categoryCount: 9`.
+  - Blocking net categories returned by the tool: `GND(6)`, `AC_N(4)`, `AC_L_FUSED(4)`, `ONE_WIRE(4)`, `+3V3(4)`, `+5V(3)`, `AC_L_IN(2)`, `DIMMER_ZC(2)`, `DIMMER_PWM(2)`.
+- PCB validation gate status:
+  - Footprints + intent: pass
+  - Placement intent: pass
+  - Outline defined: pass
+  - Routing quality: fail
+  - DRC clean: fail
+  - Export ready: blocked by external dependency
+- Result and remaining gap:
+  - The new MCP DRC tool works live in the EasyEDA editor runtime.
+  - PCB export is still blocked because the board has 31 live connection errors that need routing repair.
+- Next hypothesis or next step:
+  - Use the returned DRC net buckets to drive a focused repair loop starting with the highest-count disconnected nets (`GND`, `AC_N`, `AC_L_FUSED`, `ONE_WIRE`, `+3V3`).
+
+## 2026-04-15 (delete_pcb_line source verification)
+
+- Objective: fix `delete_pcb_line` false-success behavior so live PCB cleanup removes stale polyline records from document source instead of only disappearing from primitive inventory.
+- Disposable validation project: `test` / `HRV_Controller` / `HRV_Controller_SCH` / `PCB4`.
+- Starting bridge and UI state: live PCB repair on `PCB4` had already rerouted the AC cluster once; stale polylines `e11`–`e15` still remained in `get_document_source` and DRC output even after `delete_pcb_line` reported `deleted: true, saved: true`.
+- Exact failure symptoms and errors:
+  - Runtime `delete_pcb_line` trusted `list_pcb_primitive_ids { family: 'line' }` as the only readback check.
+  - On the live host, primitive inventory dropped `e11`–`e15` while `get_document_source` still contained their `POLY` records, and DRC continued to report those stale IDs.
+  - A first live repair attempt also showed that exploratory low-voltage reroutes can quickly create new clearance failures; those probe traces were removed before ending the iteration.
+- Files changed in this iteration:
+  - `src/mcp-tool-runtime.ts`
+  - `test/mcp-tools.test.ts`
+  - `.github/skills/improve-mcp/ITERATION-REPORT.md`
+- Code changes made:
+  - Replaced the direct `delete_pcb_line` tool handler with `callDeletePcbLineWithRecovery(...)`.
+  - Added line-source parsing helpers so PCB line deletion can remove `POLY`/`TRACK`/`LINE` records through `set_document_source` when the host delete path is a no-op.
+  - Tightened delete-line verification again so success now requires both primitive inventory readback and source readback; if source still contains the line, the runtime rewrites source instead of accepting false success.
+  - Added focused tests covering timeout recovery, host false success, and the live-observed case where line inventory drops the ID but source still contains the stale polyline.
+- Restart and reconnection actions taken:
+  - Ran focused runtime tests after each patch.
+  - Rebuilt the package with `npm run build`.
+  - Restarted the daemon twice with `npm run mcp:server:daemon` after clearing stale server processes.
+  - Reconnected the EasyEDA bridge from the header menu between daemon restarts.
+- Validation steps executed:
+  - `npm test -- test/mcp-tools.test.ts` → pass after both delete-line runtime patches.
+  - Live `delete_pcb_line` on `e11`–`e15` returned `sourceRewriteRecovered: true` and monotonic source-hash updates.
+  - Live `get_document_source` confirmed `e11`–`e15` no longer exist in PCB source.
+  - Live DRC after stale-line removal improved from the polluted state down to `issueCount: 23`, then settled at `issueCount: 24` after reverting an exploratory low-voltage routing probe.
+  - Current blocking DRC categories on the restored board state: `Line to TH Pad(1)`, `Line to Line(2)`, `ONE_WIRE(4)`, `+3V3(4)`, `DIMMER_ZC(2)`, `DIMMER_PWM(2)`, `GND(6)`, `+5V(3)`.
+- PCB validation gate status:
+  - Footprints + intent: pass
+  - Placement intent: pass
+  - Outline defined: pass
+  - Routing quality: fail
+  - DRC clean: fail
+  - Export ready: blocked by external dependency
+- Result and remaining gap:
+  - The MCP service bug is fixed at the root: `delete_pcb_line` no longer returns success while stale source records survive, and the live AC cleanup now persists into source and DRC.
+  - `PCB4` is no longer polluted by the first failed AC reroute, but the board still needs careful low-voltage routing plus one remaining AC clearance reroute before DRC can pass.
+- Next hypothesis or next step:
+  - Reroute `e25` away from `R1_2` and `e18`, then tackle the low-voltage nets in smaller validated slices with pad-clearance-aware waypoints instead of broad bus probes.
+
+## 2026-04-17 (bridge restart recovery)
+
+- Objective: validate that the stale reconnect/status split is fixed live so an EasyEDA bridge session cleanly drops on daemon stop and reattaches after one fresh daemon restart.
+- Disposable validation project: `test` / `HRV_Controller` / `HRV_Controller_SCH` / `PCB4`.
+- Starting bridge and UI state: EasyEDA editor loaded on `PCB4`; MCP context was readable again after the host-side runtime update; local repo already contained the liveness-probe/status-refresh patch and focused bridge tests were green.
+- Exact failure symptoms and errors:
+  - Pre-fix behavior had left the EasyEDA UI showing stale `Connected: true` after daemon restarts.
+  - During this live validation slice, one immediate post-restart `get_layout_fitness_score` call failed once with `EasyEDA bridge disconnected while waiting for ...` before the bridge recovered.
+- Files changed in this iteration:
+  - `.github/skills/improve-mcp/ITERATION-REPORT.md`
+- Code changes made:
+  - None in this iteration; this slice was live validation of the already-landed bridge liveness/status patch.
+- Restart and reconnection actions taken:
+  - Killed the active daemon process (`ts-node ./src/mcp-server.ts`).
+  - Confirmed MCP dropped to a disconnected bridge state.
+  - Started one fresh daemon with `npm run mcp:server:daemon` and verified listeners on `127.0.0.1:19732` and `127.0.0.1:19733`.
+  - Did not use a manual EasyEDA UI reconnect after the fresh daemon start.
+- Validation steps executed:
+  - `get_current_context` before restart → pass on active PCB UUID `710ffc7704984f0d8ca5da0f70010de7`.
+  - Killed daemon, then `get_current_context` → `EasyEDA extension is not connected to the MCP bridge`.
+  - Restarted one fresh daemon and confirmed bound ports/process via `ps` and `ss`.
+  - Subsequent `get_current_context` recovered without a manual reconnect step and returned the same active PCB/project context.
+  - First post-recovery `get_layout_fitness_score` call disconnected once mid-request.
+  - Immediate follow-up `get_current_context` succeeded again.
+  - Second `get_layout_fitness_score { connectorDesignatorPrefixes: ['J', 'U'], matingSideDepth: 200 }` succeeded live and returned `totalScore: 0`, `drcErrors: 3`, `hasCollisions: true`, `isMatingSideClear: false`, `connectorsConsidered: 6`.
+- PCB validation gate status:
+  - Footprints + intent: pass
+  - Placement intent: fail
+  - Outline defined: pass
+  - Routing quality: fail
+  - DRC clean: fail
+  - Export ready: not reached
+- Result and remaining gap:
+  - The restart-recovery fix now works for the primary failure mode: after a real daemon stop, the bridge drops cleanly, and after one fresh daemon start, EasyEDA reattaches without a manual reconnect.
+  - A transient disconnect still occurred on the first heavy post-restart tool call, so the restart path is improved but not yet perfectly steady under immediate follow-up traffic.
+  - Independent of bridge recovery, `PCB4` still scores poorly and remains blocked by live board-state issues (`drcErrors: 3`, collisions, poor mating-side clearance).
+- Next hypothesis or next step:
+  - Treat the stale-status split as fixed enough to proceed, but watch for one more bridge-session edge around the first post-restart request; if it repeats, inspect server-side socket replacement/close ordering while keeping the PCB-completion work moving on `PCB4`.
+
+## 2026-04-17 (layout skill trial on current schematic)
+
+- Objective: try the PCB layout skill against the currently open `HRV_Controller_SCH` schematic by creating a fresh linked PCB, importing the schematic, and running the first placement pass.
+- Disposable validation project: `test` / `HRV_Controller` / `HRV_Controller_SCH` / `PCB5`.
+- Starting bridge and UI state: active document was schematic page `143d121a775d49a0a6d0569515d2209a`; live project inventory showed board `HRV_Controller` with no linked PCB before the trial.
+- Exact failure symptoms and errors:
+  - None in the create/import path.
+  - The imported PCB began with 31 connection-rule DRC issues, `hasCollisions: true`, `isMatingSideClear: false`, and no board outline, so the layout skill could only complete its initial placement stage.
+- Files changed in this iteration:
+  - `.github/skills/improve-mcp/ITERATION-REPORT.md`
+- Code changes made:
+  - None; this iteration was live workflow execution only.
+- Restart and reconnection actions taken:
+  - None required during this slice.
+- Validation steps executed:
+  - `create_pcb` via the live MCP HTTP endpoint created linked PCB UUID `266bd70f1cd244c39e5688be25e0abda` under board `HRV_Controller` (`PCB5`).
+  - `import_schematic_to_pcb { pcbUuid, saveAfter: true }` succeeded with `readbackVerified: true`; source summary changed from `componentCount: 0` to `componentCount: 10` and `padNetCount: 48`.
+  - `open_document` + `get_current_context` confirmed the active document switched to PCB `PCB5`.
+  - `list_pcb_primitive_ids { family: 'component' }` returned 10 component IDs and `list_pcb_nets` returned 10 expected nets.
+  - Baseline `get_layout_fitness_score` returned `totalScore: 31.75`, `drcErrors: 31`, `hasCollisions: true`, `isMatingSideClear: false`.
+  - Triggered EasyEDA UI `Layout -> Auto Component Placement`.
+  - Read back post-placement coordinates from PCB source and saved the active PCB.
+  - `run_pcb_drc` after the placement pass still returned 31 connection errors across `AC_N(4)`, `AC_L_FUSED(4)`, `AC_L_IN(2)`, `ONE_WIRE(4)`, `+3V3(4)`, `DIMMER_ZC(2)`, `DIMMER_PWM(2)`, `GND(6)`, `+5V(3)`.
+  - `get_pcb_primitives_bbox` over all components returned bbox `{ minX: 11.81, minY: -1655.38, maxX: 3257.36, maxY: -703.26 }`.
+- PCB validation gate status:
+  - Footprints + intent: pass
+  - Placement intent: fail
+  - Outline defined: fail
+  - Routing quality: fail
+  - DRC clean: fail
+  - Export ready: not reached
+- Result and remaining gap:
+  - The layout skill is now running on a fresh PCB created from the current schematic, and the first host-side auto-placement pass completed and was saved.
+  - The board still needs intentional zoning/refinement, explicit board-outline geometry, and full routing before the layout skill can be considered complete.
+- Next hypothesis or next step:
+  - Use the saved `PCB5` as the new layout target, define a board outline from the component bbox plus clearance, then do connector- and MCU-centered manual placement refinement before routing.
+
+## 2026-04-17 (layout-agent live validation)
+
+- Objective: live-validate the new `get_layout_fitness_score` and `align_to_board_edge` MCP tools against the disposable `PCB4` board and calibrate them against the real EasyEDA runtime.
+- Disposable validation project: `test` / `HRV_Controller` / `HRV_Controller_SCH` / `PCB4`.
+- Starting bridge and UI state: EasyEDA editor was open and authenticated on the `PCB4` tab, but the bridge started disconnected; the header menu reconnect path was available from the EasyEDA UI.
+- Exact failure symptoms and errors:
+  - The fresh daemon initially advertised only stale tool state because the old `ts-node` process had not been restarted with the new layout-agent files.
+  - Restarting `npm run mcp:server:daemon` exposed `ts-node` compile failures in `src/layout-agent.ts` that the earlier bundle compile had not surfaced.
+  - The first live `get_layout_fitness_score` call failed because this host/runtime rejected `list_pcb_primitive_ids { family: 'via' }` with `Unsupported PCB primitive family: via`.
+  - After fixing that, the first live score run succeeded but reported `connectorsConsidered: 0` even with exact connector designators because live `get_pcb_primitive` readback was too sparse to recover designator metadata reliably.
+  - A reversible `align_to_board_edge` probe on `e8` (`U5`) correctly refused to move the part because the active PCB currently lacks detectable board-outline geometry in the form expected by the tool: `Board outline is required before using layout edge alignment or mating-side scoring`.
+  - After later daemon restarts, the EasyEDA UI status dialog could show `Connected: true` while both `mcp_easyeda-mcp_ping_bridge` and the local server `bridge_status` still reported the bridge as disconnected, indicating another stale-status reconnect failure in the live runtime.
+- Files changed in this iteration:
+  - `src/layout-agent.ts`
+  - `.github/skills/improve-mcp/ITERATION-REPORT.md`
+- Code changes made:
+  - Tightened `parseAlignArgs(...)` and bbox parsing in `src/layout-agent.ts` so the `ts-node` daemon path compiles cleanly, not just the bundle compile path.
+  - Added a graceful fallback in `get_layout_fitness_score` so hosts that reject via-family primitive inventory now continue with `viaCount: 0` instead of failing the whole score tool.
+  - Added PCB-source parsing for `ATTR ... Designator` records so the score tool can recover component designators from `get_document_source` when live `get_pcb_primitive` serialization is too sparse.
+- Restart and reconnection actions taken:
+  - Repeatedly cleared stale server processes with `pkill -f '/home/i/repos/EasyEDA-MCP/src/mcp-server.ts'`.
+  - Restarted the daemon multiple times with `npm run mcp:server:daemon` after each fix.
+  - Used the EasyEDA UI `EasyEDA MCP Bridge -> Reconnect` path repeatedly after daemon restarts.
+  - Used Chrome page inspection to confirm the editor stayed on `PCB4` while reconnecting.
+- Validation steps executed:
+  - Attached a local `StreamableHTTPClientTransport` client to `http://127.0.0.1:19733/mcp` and confirmed the daemon now exposes `align_to_board_edge` and `get_layout_fitness_score`.
+  - Read live PCB source through `get_document_source` and mapped component IDs to designators: `e5 -> U2`, `e7 -> U4`, `e8 -> U5`, `e9 -> U6`.
+  - Live `get_layout_fitness_score { connectorDesignatorPrefixes: ['U2','U4','U5','U6'], matingSideDepth: 15 }` succeeded before the later reconnect instability and returned:
+    - `totalScore: 0`
+    - `ratsnestLengthMm: 1285`
+    - `viaCount: 0` (host fallback path)
+    - `thermalIsolationScore: 29`
+    - `drcErrors: 3`
+    - `hasCollisions: true`
+  - Live `align_to_board_edge { componentId: 'e8', edge: 'EAST', clearance: 50 }` correctly refused to move because no board outline was detectable.
+  - Restored `e8` explicitly with `modify_pcb_component { primitiveId: 'e8', x: 5000, y: -950, rotation: 90 }` after the probe.
+  - `TS_NODE_COMPILER_OPTIONS='{"ignoreDeprecations":"5.0"}' node --test --require ts-node/register/transpile-only ./test/mcp-tools.test.ts` → pass (27/27).
+  - `npm run compile` → pass.
+- PCB validation gate status:
+  - Footprints + intent: pass
+  - Placement intent: pass
+  - Outline defined: fail
+  - Routing quality: fail
+  - DRC clean: fail
+  - Export ready: not reached
+- Result and remaining gap:
+  - The new score tool is now live-usable on this host, and the repo-side server defects exposed by live validation were fixed at the source.
+  - The alignment tool’s outline precondition also behaves correctly live: it refuses to snap components when no board outline can be read back.
+  - The remaining blocker for further live validation is bridge reconnect instability after daemon restarts: the EasyEDA UI can display stale `Connected: true` state while the actual websocket session is still down.
+  - The board itself also remains incomplete for layout-quality purposes: the live score still reports high ratsnest length, collisions, and non-zero DRC issues.
+- Next hypothesis or next step:
+  - Fix the stale bridge-status/reconnect split so daemon restarts reattach reliably, then rerun `get_layout_fitness_score` to confirm connector detection now increments `connectorsConsidered`, and only after that decide whether `PCB4` needs board-outline creation or outline-readback fixes before using `align_to_board_edge` again.
+
+## 2026-04-16 (hot-load DRC recovery and GND reduction)
+
+- Objective: recover live hot-loaded `run_pcb_drc` in the EasyEDA editor, then resume the remaining `PCB4` GND routing loop.
+- Disposable validation project: `test` / `HRV_Controller` / `HRV_Controller_SCH` / `PCB4`.
+- Starting bridge and UI state: hot-loaded bridge reconnect was already recovered and live `ping_bridge` worked, but `run_pcb_drc` still failed with `Illegal invocation`; `PCB4` baseline was `GND(5)` with retained GND backbone `e41`.
+- Exact failure symptoms and errors:
+  - Live MCP `run_pcb_drc` failed in the hot-loaded session with `Illegal invocation` even though direct page-level `eda.pcb_Drc.check(...)` calls succeeded.
+  - After rebinding `eda.pcb_Drc.check`, the live failure persisted until the shared timeout helper was updated; once the latest bundle was truly hot-loaded into the extension sandbox, the failure moved off `Illegal invocation` and DRC succeeded again.
+  - Hot-loading the rebuilt bundle via `Function(...)` initially failed because EasyEDA globals such as `eda` and `EDMT_EditorDocumentType` only exist on the extension sandbox object, not the page global.
+  - In the resumed GND loop, `U3_3` still emitted the stale diagonal start anchor, and `U5_1` still failed to attach to helper-generated copper on all tested exits.
+- Files changed in this iteration:
+  - `src/easyeda-mcp-bridge.ts`
+  - `src/host-method-timeout.ts`
+  - `.github/skills/improve-mcp/ITERATION-REPORT.md`
+- Code changes made:
+  - Updated `runPcbDrc(...)` to call `eda.pcb_Drc.check` through `callHostMethod(...)`.
+  - Updated `withHostMethodTimeout(...)` to use runtime-safe timer selection (`eda.sys_Timer` first, then bound window timers, then global timers) instead of raw browser timers.
+- Restart and reconnection actions taken:
+  - Recompiled with `npm run compile` after each runtime patch.
+  - Hot-loaded the rebuilt `dist/index.js` into `window._EXTAPI_SCRIPT_SPACES_[extensionUuid]` using a localhost websocket.
+  - Switched the hot-load execution to `Function('sandbox', 'with (sandbox) { ... }')` so EasyEDA globals like `eda` and `EDMT_EditorDocumentType` resolve from the extension sandbox.
+  - Re-ran `activate()` and `bridgeReconnect()` after each successful hot-load.
+- Validation steps executed:
+  - `npm run compile` → pass after both runtime patches.
+  - Live `run_pcb_drc { strict: true, showUi: true }` → success after the timeout-helper fix and corrected sandbox-scoped hot-load.
+  - Restored a working live DRC loop on `PCB4`; baseline read back as `GND(5)`.
+  - Re-ran the `U3_3 -> U4_2` discriminator route on `BottomLayer`; returned polyline still started at `2953.917697024985,-895.8711171321241`, so the original through-hole anchor bug remains live.
+  - Confirmed `U6_1 -> U4_2` can be routed cleanly on `BottomLayer` with a left-side detour, retained as `e71`, and reduces live DRC from `GND(5)` to `GND(4)`.
+  - Confirmed `U5_1` still fails to attach through all tested helper exits (right, left, and bottom detours), and exploratory manual/via attempts did not reduce DRC and were removed.
+  - Confirmed exploratory `U1_13` helper routes can attach but current tested top-layer corridors collide with existing `+3V3` / `DIMMER_PWM` copper, so those probes were removed.
+- PCB validation gate status:
+  - Footprints + intent: pass
+  - Placement intent: pass
+  - Outline defined: pass
+  - Routing quality: fail
+  - DRC clean: fail
+  - Export ready: blocked by board state
+- Result and remaining gap:
+  - The hot-loaded runtime defect is fixed at the source: live `run_pcb_drc` works again in the recovered EasyEDA session.
+  - `PCB4` improved from `GND(5)` to `GND(4)` and retained the clean GND route `e71` connecting `U6_1` to the main GND island through `U4_2`.
+  - Remaining live blockers are `U1_13`, `U1_16`, `U3_3`, and `U5_1`; current evidence points to unresolved pad-anchor/attach behavior for `U3_3` and `U5_1`, while the ESP32 pads need a cleaner top-layer escape corridor.
+- Next hypothesis or next step:
+  - Compare live pad-attach behavior for `U5_1` against the repo anchor math and patch the remaining connector/through-hole anchor case before resuming the last four GND routes.
+
+## 2026-04-16 (pad tuple anchor fix)
+
+- Objective: fix the live PCB pad anchor helper so waypoint routes use the real EasyEDA pad geometry exposed by `getState_Pad()` / `getState_Hole()`, then revalidate the remaining `PCB4` GND routes.
+- Disposable validation project: `test` / `HRV_Controller` / `HRV_Controller_SCH` / `PCB4`.
+- Starting bridge and UI state: hot-loaded bridge and `run_pcb_drc` were already recovered; live board baseline from the prior iteration was `GND(4)` with retained GND route `e71`.
+- Exact failure symptoms and errors:
+  - Live pad-to-pad helper routes still emitted fallback-style endpoints such as `4992.5` and `2953.917697024985...`, suggesting `getPcbPadRouteAnchor(...)` could not read real pad size from resolved EasyEDA pad objects.
+  - Browser inspection of live pad objects showed they expose geometry through `getState_Pad()` and `getState_Hole()` tuples plus radian `getState_Rotation()` values, while the helper only read `getState_Width/Height/Diameter/HoleDiameter` and treated rotation as degrees.
+  - After the helper patch, `U5_1` and `U3_3` route starts changed to geometry-driven values (`4975.4725`, `2927.045`) proving the new code was live, but the remaining failures showed additional board-specific attach/merge behavior beyond the original stale-anchor bug.
+- Files changed in this iteration:
+  - `src/pcb-pad-anchor.ts`
+  - `test/pcb-pad-anchor.test.ts`
+  - `.github/skills/improve-mcp/ITERATION-REPORT.md`
+- Code changes made:
+  - Extended `getPcbPadRouteAnchor(...)` to derive pad width/height from live `getState_Pad()` tuples when direct size getters are unavailable.
+  - Added `getState_Hole()` fallback parsing for hole diameter reads.
+  - Taught rectangular extent resolution to accept radian rotations from the live EasyEDA pad API as well as degree-style test inputs.
+  - Added focused unit tests covering tuple-backed pad geometry and radian rotation values.
+- Restart and reconnection actions taken:
+  - Ran focused tests and `npm run compile`.
+  - Hot-loaded the rebuilt `dist/index.js` into `window._EXTAPI_SCRIPT_SPACES_[extensionUuid]` using the sandbox-scoped `Function('sandbox', 'with (sandbox) { ... }')` loader.
+  - Reconnected the live bridge from the updated sandbox and verified `bridge_status` before routing.
+- Validation steps executed:
+  - `npm test -- test/pcb-pad-anchor.test.ts` → pass (`tests 101`, `pass 100`, `fail 0`, `skipped 1`).
+  - `npm run compile` → pass.
+  - Live browser inspection confirmed resolved pad objects now expose tuples such as `e6e6.getState_Pad() => ["ELLIPSE",78.74,78.74]`, `e8e11.getState_Pad() => ["RECT",59.055,59.055,0]`, and radian rotations like `1.5707963267948966`.
+  - Live `U5_1 -> U4_2` and `U5_1 -> U6_1` probes returned the new left-side anchor `4975.4725`, proving the tuple-backed helper path is active.
+  - Live `U3_3 -> U4_2` probe returned the new start anchor `2927.045` instead of the old stale diagonal point and reduced the board from `GND(4)` to `GND(3)`.
+  - Additional probes showed this EasyEDA host does not reliably merge separate same-net line/polyline primitives through overlap or simple interior crossing; those exploratory lines were deleted.
+  - Exploratory via escape for `U1_13` did not reduce GND errors and introduced a via-size violation, so the via and lines were removed.
+  - Final live DRC state at end of iteration: `GND(3)` with remaining disconnects `U1_13`, `U1_16`, and `U3_3`.
+- PCB validation gate status:
+  - Footprints + intent: pass
+  - Placement intent: pass
+  - Outline defined: pass
+  - Routing quality: fail
+  - DRC clean: fail
+  - Export ready: blocked by board state
+- Result and remaining gap:
+  - The repo-side anchor defect is fixed: the live helper now reads tuple-backed pad geometry and radian rotations instead of falling back blindly to default extents.
+  - `PCB4` improved from `GND(4)` to `GND(3)` after the live revalidation loop.
+  - Remaining blockers are no longer the original stale-anchor bug. They are the unresolved `U3_3` attach case and two ESP32 ground escapes (`U1_13`, `U1_16`) that still need a board-specific clean path into the GND island.
+- Next hypothesis or next step:
+  - Keep `e85` as the current retained improvement and attack the remaining `U1_13`, `U1_16`, and `U3_3` routes with board-specific geometry rather than more generic pad-anchor patches.
+
+## 2026-04-15 (pcb via tool live validation)
+
+- Objective: add first-class PCB via support to the MCP service, then validate the new via flow end to end against the live EasyEDA runtime before resuming the remaining low-voltage routing on `PCB4`.
+- Disposable validation project: `test` / `HRV_Controller` / `HRV_Controller_SCH` / `PCB4`.
+- Starting bridge and UI state: the active PCB was already restored to a stable `run_pcb_drc` baseline of `issueCount: 12` with only `+5V(2)`, `+3V3(4)`, and `GND(6)` remaining; the live bridge still advertised the pre-via method set even after a normal reconnect.
+- Exact failure symptoms and errors:
+  - The repo had no MCP surface for via placement even though the host SDK already exposed `eda.pcb_PrimitiveVia.create(...)`, `modify(...)`, `delete(...)`, and `getAllPrimitiveId(...)`.
+  - After repo changes, `npm run build` plus daemon restart plus a normal page reconnect still left the live EasyEDA page advertising the old bridge method set.
+- Files changed in this iteration:
+  - `src/mcp-bridge-protocol.ts`
+  - `src/mcp-tool-schemas.ts`
+  - `src/mcp-tool-runtime.ts`
+  - `src/easyeda-mcp-bridge.ts`
+  - `test/mcp-tools.test.ts`
+  - `.github/skills/improve-mcp/ITERATION-REPORT.md`
+- Code changes made:
+  - Added bridge methods and MCP tool registration for `add_pcb_via`, `modify_pcb_via`, and `delete_pcb_via`.
+  - Added via schemas including `pcbViaTypeSchema`, `addPcbViaInputSchema`, and `modifyPcbViaInputSchema`.
+  - Extended `list_pcb_primitive_ids` to support `family: "via"`.
+  - Implemented bridge-side via create/modify/delete handlers through the native host `pcb_PrimitiveVia` APIs, including optional save handling and via-type mapping.
+  - Added focused tool/schema tests for via registration and forwarding.
+- Restart and reconnection actions taken:
+  - Ran `npm test` and fixed the only failing via-schema assertion.
+  - Ran `npm run build` and restarted the daemon with `npm run mcp:server:daemon`.
+  - Reloaded and reconnected the EasyEDA editor page.
+  - Hot-loaded the rebuilt `dist/index.js` bundle into the live EasyEDA extension script space and invoked `activate()` plus `bridgeReconnect()` after normal reconnect still exposed stale methods.
+- Validation steps executed:
+  - `npm test` → pass (`95` passed, `0` failed, `1` skipped).
+  - `npm run build` → pass.
+  - `bridge_status` and `get_capabilities` after hot-load confirmed the live runtime now advertises `add_pcb_via`, `modify_pcb_via`, and `delete_pcb_via`.
+  - MCP HTTP `tools/list` at `http://127.0.0.1:19733/mcp` confirmed the daemon exposes the via tools and `list_pcb_primitive_ids` via-family support.
+  - Live `tools/call` for `add_pcb_via` created real via `e10` on net `GND` with saved readback.
+  - Live `tools/call` for `list_pcb_primitive_ids { family: "via", net: "GND" }` returned `count: 1` and `primitiveIds: ["e10"]`.
+  - Live `tools/call` for `delete_pcb_via` removed `e10`, and follow-up via inventory returned `count: 0`.
+  - Final `run_pcb_drc` after cleanup returned the same pre-probe baseline: `issueCount: 12` with categories `+5V(2)`, `+3V3(4)`, `GND(6)`.
+- PCB validation gate status:
+  - Footprints + intent: pass
+  - Placement intent: pass
+  - Outline defined: pass
+  - Routing quality: fail
+  - DRC clean: fail
+  - Export ready: blocked by external dependency
+- Result and remaining gap:
+  - The MCP service now exposes native PCB via support and that path is validated end to end on the live EasyEDA host.
+  - The active PCB was restored cleanly after the reversible via probe, but the board still needs via-assisted routing repairs for `+5V`, `+3V3`, and `GND` before DRC can pass.
+- Next hypothesis or next step:
+  - Use the new via tool on the smallest remaining net family first, starting with a via-assisted `+5V` connection from `U1_14` into the existing `e73` cluster, then rerun DRC after each reversible routing slice.
+
+## 2026-04-15 (through-hole anchor runtime fix)
+
+- Objective: fix the pad-anchor logic for through-hole and circular PCB pads so waypoint routing leaves pads on a cardinal side instead of a diagonal perimeter point, then validate the change against the live `PCB4` routing flow.
+- Disposable validation project: `test` / `HRV_Controller` / `HRV_Controller_SCH` / `PCB4`.
+- Starting bridge and UI state: the live board had already been reduced to `GND(5)` with retained GND route `e41`; repeated live `U3_3 -> U4_2` probes still emitted the old diagonal start anchor `2953.917697024985,-895.8711171321241` and failed to connect `U3_3`.
+- Exact failure symptoms and errors:
+  - Repo-side `getPcbPadRouteAnchor(...)` used radial edge projection for circular and through-hole pads, which matches geometric copper extent but not the host's actual electrically attachable pad-exit behavior.
+  - Live routing on `PCB4` showed that through-hole connections only attached reliably when the first segment left on a cardinal side, especially for orthogonal waypoint routes.
+  - After patching the repo and compiling, the live EasyEDA runtime still emitted the pre-fix diagonal anchor even after hot-loading `dist/index.js`, closing likely stale websocket ids, and re-running `activate()` in the extension sandbox.
+- Files changed in this iteration:
+  - `src/pcb-pad-anchor.ts`
+  - `test/pcb-pad-anchor.test.ts`
+  - `.github/skills/improve-mcp/ITERATION-REPORT.md`
+- Code changes made:
+  - Added a circular/through-hole-specific anchor path in `getPcbPadRouteAnchor(...)` that snaps exits to the dominant cardinal side based on the outgoing segment direction.
+  - Kept the existing perimeter projection logic for rectangular pads unchanged.
+  - Added focused unit tests covering diagonal circular-pad exits and hole-diameter fallback exits.
+- Restart and reconnection actions taken:
+  - Ran `npm run compile` to rebuild `dist/index.js`.
+  - Hot-loaded the rebuilt bundle into `window._EXTAPI_SCRIPT_SPACES_[extensionUuid]` through a local websocket feed.
+  - Called the hot-loaded `activate()` successfully.
+  - Closed likely stale websocket ids `easyeda-mcp-bridge` through `easyeda-mcp-bridge-4` via `sys_WebSocket.close(...)` and re-ran `activate()`.
+  - Hot-loaded `bridgeReconnect()` still failed with `TypeError: Illegal invocation`, so a full live bridge handoff could not be completed in-page.
+- Validation steps executed:
+  - `npm test -- test/pcb-pad-anchor.test.ts` → pass after adding the new focused coverage.
+  - `npm run compile` → pass.
+  - Live discriminating route probe replayed the prior `U3_3 -> U4_2` waypoint path twice; both times the returned polyline still started at the stale diagonal point `2953.917697024985,-895.8711171321241`, proving the active MCP route handler had not switched to the rebuilt code.
+  - Deleted both probe lines (`e50`, `e53`) and re-ran live DRC to restore the board to the stable `GND(5)` baseline.
+  - Final live DRC after cleanup: `issueCount: 5`, categories `GND(5)` only.
+- PCB validation gate status:
+  - Footprints + intent: pass
+  - Placement intent: pass
+  - Outline defined: pass
+  - Routing quality: fail
+  - DRC clean: fail
+  - Export ready: blocked by external dependency
+- Result and remaining gap:
+  - The repo now contains the through-hole anchor fix with focused automated coverage.
+  - Live validation is still blocked by runtime takeover: the EasyEDA page continues serving MCP routing calls through the old bridge handler even after hot-loading the rebuilt bundle and force-closing likely stale sockets.
+  - The board was restored to the same stable post-cleanup state as before this iteration (`GND(5)`, retained `e41`).
+- Next hypothesis or next step:
+  - Fix the live runtime takeover path itself: either make hot-loaded `bridgeReconnect()` callable without the host `Illegal invocation` error, or perform a full package reinstall/reload path that guarantees MCP requests are served by the rebuilt bundle before resuming GND routing.
+
+## 2026-04-16 (hot-load bridge handoff recovery)
+
+- Objective: fix the live hot-load bridge handoff so a rebuilt `dist/index.js` can take over the EasyEDA runtime, reconnect a fresh websocket, and keep the page on a usable MCP session without relying on a full extension reinstall.
+- Disposable validation project: `test` / `HRV_Controller` / `HRV_Controller_SCH` / `PCB4`.
+- Starting bridge and UI state: the hot-loaded bundle could populate exported functions in `window._EXTAPI_SCRIPT_SPACES_[extensionUuid]`, but calling `bridgeReconnect()` failed with `Illegal invocation`; before any websocket activity, hot-loaded `startEasyedaMcpBridge(true)` was dying on page-realm timer usage and `sys_Storage.getExtensionUserConfig(...)` reads.
+- Exact failure symptoms and errors:
+  - Hot-loaded `bridgeReconnect()` initially threw at the wrapper timer path.
+  - Instrumentation then showed the reconnect path returning before any `sys_WebSocket.register(...)` call.
+  - The first concrete pre-socket failure was `sys_Storage.getExtensionUserConfig('easyeda.mcpBridge:runtime-state')` throwing in the hot-loaded page realm.
+  - After storage hardening, reconnect still failed on detached timer calls; the page realm rejected browser timers until the runtime switched to EasyEDA host timers.
+- Files changed in this iteration:
+  - `src/index.ts`
+  - `src/easyeda-mcp-bridge.ts`
+  - `.github/skills/improve-mcp/ITERATION-REPORT.md`
+- Code changes made:
+  - Hardened bridge startup against `sys_Storage.getExtensionUserConfig(...)` failures by falling back to defaults/in-memory state instead of aborting reconnect.
+  - Switched hot-load-sensitive timer scheduling from bare browser timers to `eda.sys_Timer` first, with browser timers retained only as fallback.
+  - Kept explicit host binding on websocket calls (`close`, `register`, `send`) and made `bridgeReconnect()` tolerate status-popup failures so the reconnect result is not coupled to the dialog path.
+- Restart and reconnection actions taken:
+  - Recompiled `dist/index.js` repeatedly with `npm run compile` after each narrowing patch.
+  - Re-served the rebuilt bundle over a local websocket at `ws://127.0.0.1:19890` for each hot-load attempt.
+  - Hot-loaded the new bundle into the existing extension sandbox and invoked the updated `bridgeReconnect()`.
+- Validation steps executed:
+  - Focused instrumentation of hot-loaded reconnect showed the failure sequence progressing from: no websocket calls, to storage-read failure, to timer failure, to successful socket close/register/hello.
+  - Final instrumented reconnect sequence recorded: storage-read fallback, header-menu replacement, `sys_WebSocket.close('easyeda-mcp-bridge-2')`, `sys_WebSocket.register('easyeda-mcp-bridge-3', 'ws://127.0.0.1:19732/easyeda-mcp')`, persisted `connected: true`, sent hello, then received server hello.
+  - Final live bridge readback: `bridge_status.connected === true`.
+  - Live bridge traffic check: `ping_bridge` returned `ok: true`, `pong: true`, `connected: true`.
+  - Restored the board after the post-handoff discriminator route probe by deleting probe line `e56`.
+- PCB validation gate status:
+  - Footprints + intent: pass
+  - Placement intent: pass
+  - Outline defined: pass
+  - Routing quality: fail
+  - DRC clean: fail
+  - Export ready: blocked by external dependency
+- Result and remaining gap:
+  - The hot-load bridge handoff is recovered: the rebuilt bundle can now reconnect a fresh websocket and serve live MCP traffic without a full extension reinstall.
+  - The active PCB was restored after the discriminator probe and the bridge is left connected.
+  - `run_pcb_drc` still returned `Illegal invocation` in the recovered hot-loaded session, so that host-call path needs a separate follow-up before using DRC as the next live validation step.
+- Next hypothesis or next step:
+  - Resume runtime-specific hardening on `run_pcb_drc`, then return to the remaining `GND` repair loop on `PCB4` once DRC is stable again under the hot-loaded session.

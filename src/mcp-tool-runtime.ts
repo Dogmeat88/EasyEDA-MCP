@@ -1,5 +1,6 @@
 import type { EasyedaBridgeCaller, ToolRegistrar } from './mcp-tool-types';
 import { computeSourceRevision } from './mcp-bridge-protocol';
+import { alignToBoardEdge, getLayoutFitnessScore } from './layout-agent';
 import * as schemas from './mcp-tool-schemas';
 import { findAddedPrimitiveIds } from './primitive-id-diff';
 
@@ -217,6 +218,11 @@ function createToolRegistrations(bridgeSession: EasyedaBridgeCaller): ToolRegist
 			handler: async args => makeToolResult(await bridgeSession.call('modify_pcb_component', args)),
 		},
 		{
+			name: 'align_to_board_edge',
+			config: { description: 'Move a PCB component so its bounding box sits against the board outline on the requested edge with the requested clearance.', inputSchema: schemas.alignToBoardEdgeInputSchema },
+			handler: async args => makeToolResult(await alignToBoardEdge(bridgeSession, args)),
+		},
+		{
 			name: 'delete_pcb_component',
 			config: { description: 'Delete a component primitive from the active PCB document. Set skipConfirmation to true to suppress the bridge-side delete prompt.', inputSchema: schemas.deletePrimitiveInputSchema },
 			handler: async args => makeToolResult(await callDeletePcbComponentWithRecovery(bridgeSession, args)),
@@ -280,6 +286,11 @@ function createToolRegistrations(bridgeSession: EasyedaBridgeCaller): ToolRegist
 			name: 'get_pcb_net',
 			config: { description: 'Return details, current color, and routed length for a PCB net.', inputSchema: schemas.getPcbNetInputSchema },
 			handler: async args => makeToolResult(await bridgeSession.call('get_pcb_net', args)),
+		},
+		{
+			name: 'get_layout_fitness_score',
+			config: { description: 'Return a heuristic PCB layout scorecard using current net lengths, via count, DRC state, connector edge clearance, and mating-side obstruction checks.', inputSchema: schemas.getLayoutFitnessScoreInputSchema },
+			handler: async args => makeToolResult(await getLayoutFitnessScore(bridgeSession, args)),
 		},
 		{
 			name: 'set_pcb_net_color',
